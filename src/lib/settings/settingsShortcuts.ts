@@ -59,6 +59,13 @@ const SHORTCUT_DEFINITIONS = Object.freeze({
 		"⌘",
 		"]",
 	]),
+	// ⇧ because the chord matcher reads Ctrl as ⌘, and a bare Ctrl+J is the
+	// newline agent CLIs take in the very terminals this walks between.
+	"go-to-next-up": appShortcut("settings.shortcuts.cmd.goToNextUp", [
+		"⌘",
+		"⇧",
+		"J",
+	]),
 	"split-right": appShortcut("settings.shortcuts.cmd.splitRight", ["⌘", "D"]),
 	"split-below": appShortcut("settings.shortcuts.cmd.splitBelow", [
 		"⌘",
@@ -149,6 +156,7 @@ const SHORTCUT_GROUPS = [
 			"switch-desktop",
 			"focus-pane-previous",
 			"focus-pane-next",
+			"go-to-next-up",
 			"split-right",
 			"split-below",
 			"focus-pane-left",

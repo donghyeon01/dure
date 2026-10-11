@@ -40,6 +40,11 @@ export interface AttentionResolution {
   approvalSignatures: Map<string, string>;
   /** agentId → 마지막으로 관측한 host 완료 카운터 (다음 라운드 입력) */
   turnCompletedCounts: Map<string, string>;
+  /** agentId → when this window saw the current wait for a human begin
+   *  (next round's input). Absent when the wait began unobserved. Presentation
+   *  only — ordering and an elapsed label; unread stays on the monotonic
+   *  episode sequence. */
+  waitingSince: Map<string, number>;
 }
 
 /** 순수 코어: 이전 표시 상태 + 이번 원료 → 새 표시 상태와 에피소드 목록.
@@ -72,6 +77,10 @@ export function deriveAttentionResolution(
     approvalSignatures?: ReadonlyMap<string, string>;
     /** 직전 라운드까지 관측한 host 완료 카운터 */
     turnCompletedCounts?: ReadonlyMap<string, string>;
+    /** 직전 라운드까지의 대기 시작 관측 */
+    waitingSince?: ReadonlyMap<string, number>;
+    /** Wall-clock time of this round, stamped on episodes it sees happen. */
+    nowMs?: number;
   },
 ): AttentionResolution {
   const displayStates: Record<string, AgentDisplayState> = {};
@@ -80,6 +89,8 @@ export function deriveAttentionResolution(
   const remainingArms = { ...armed };
   const approvalSignatures = new Map(options?.approvalSignatures ?? []);
   const turnCompletedCounts = new Map(options?.turnCompletedCounts ?? []);
+  const waitingSince = new Map(options?.waitingSince ?? []);
+  const nowMs = options?.nowMs;
   for (const source of sources) {
     const next = resolveAgentDisplayFromTiers(source.tiers);
     displayStates[source.agentId] = next;
@@ -87,6 +98,15 @@ export function deriveAttentionResolution(
     // 다르고 사건 의미는 같아, 정책 분기가 두 배로 갈라지는 것을 막는다.
     const episode = attentionEquivalentState(next);
     const prev = previousDisplay.get(source.agentId);
+    // An episode happens "now" only when this window watched the agent live
+    // up to it. After a first sighting, an unobserved stretch or the
+    // unobserved default, it may have happened long before — its time stays
+    // unknown rather than reading "just now".
+    const observedAtMs =
+      prev !== undefined &&
+      LIVE_EPISODE_STATES.has(attentionEquivalentState(prev))
+        ? nowMs
+        : undefined;
     // host 완료 카운터 — tier가 잠시 빠져도(관찰자 재접속) 이전 값을 유지해
     // 짧은 공백 사이의 완료를 잃지 않는다. 첫 관측은 기준선(에피소드 없음),
     // 감소(새 provider epoch)도 기준선 재설정이다.
@@ -108,9 +128,16 @@ export function deriveAttentionResolution(
     };
     // 승인 서명 수명: 프롬프트가 해소된 상태(waiting/exited/connecting)에
     // 도달하면 리셋. working 인터루드(출력 플랩)에는 유지해 재알림을 막는다.
+    // 대기 시작 시각은 같은 서명과 수명을 같이한다 — 같은 프롬프트의 플랩은
+    // 시작을 지키고, 새 blocked 에피소드만 다시 잰다(아래 bump 지점).
     if (episode !== "blocked" && episode !== "working" && episode !== "unknown") {
       approvalSignatures.delete(source.agentId);
+      waitingSince.delete(source.agentId);
     }
+    const beginWait = () => {
+      if (observedAtMs === undefined) waitingSince.delete(source.agentId);
+      else waitingSince.set(source.agentId, observedAtMs);
+    };
     if (episode === "exited") {
       dropArm();
       continue;
@@ -123,6 +150,7 @@ export function deriveAttentionResolution(
         agentId: source.agentId,
         kind: "done",
         ...optionalEventId(stableHostEventId(source, "turn", reportedCount)),
+        ...optionalObservedAt(observedAtMs),
       });
     }
     if (prev === undefined) {
@@ -131,6 +159,7 @@ export function deriveAttentionResolution(
         const kind =
           source.tiers.hmux?.attention === "input_required" ? "done" : "approval";
         approvalSignatures.set(source.agentId, blockedSignature(source));
+        beginWait();
         bumps.push({
           agentId: source.agentId,
           kind,
@@ -152,6 +181,7 @@ export function deriveAttentionResolution(
         approvalSignatures.get(source.agentId) === signature;
       if (staleSignature) continue;
       approvalSignatures.set(source.agentId, signature);
+      beginWait();
       if (kind === "done") dropArm();
       bumps.push({
         agentId: source.agentId,
@@ -159,6 +189,7 @@ export function deriveAttentionResolution(
         ...optionalEventId(
           stableHostEventId(source, "attention", source.tiers.hmux?.attentionId),
         ),
+        ...optionalObservedAt(observedAtMs),
       });
     }
   }
@@ -166,14 +197,27 @@ export function deriveAttentionResolution(
   for (const agentId of [...turnCompletedCounts.keys()]) {
     if (!(agentId in displayStates)) turnCompletedCounts.delete(agentId);
   }
+  for (const agentId of [...waitingSince.keys()]) {
+    if (!(agentId in displayStates)) waitingSince.delete(agentId);
+  }
   return {
     displayStates,
     bumps,
     consumedArms,
     approvalSignatures,
     turnCompletedCounts,
+    waitingSince,
   };
 }
+
+/** States in which the watcher sees an agent live, so the next episode it
+ *  records happened in front of it. */
+const LIVE_EPISODE_STATES: ReadonlySet<AgentDisplayState> = new Set([
+  "connecting",
+  "working",
+  "waiting",
+  "blocked",
+]);
 
 /** u64 10진 문자열 비교 — Number 변환은 2^53 넘는 카운터에서 어긋난다.
  *  host가 u64::to_string으로 만들어 앞자리 0이 없는 canonical 형태다. */
@@ -205,6 +249,23 @@ function optionalEventId(eventId: string | undefined): { eventId: string } | obj
   return eventId ? { eventId } : {};
 }
 
+function optionalObservedAt(
+  observedAtMs: number | undefined,
+): { observedAtMs: number } | object {
+  return observedAtMs === undefined ? {} : { observedAtMs };
+}
+
+function sameWaitStarts(
+  left: Readonly<Record<string, number>>,
+  right: Readonly<Record<string, number>>,
+): boolean {
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((agentId) => left[agentId] === right[agentId])
+  );
+}
+
 function collectSources(): AgentAttentionSource[] {
   const st = useStore.getState();
   return st.agents.map((agent) => ({
@@ -230,6 +291,7 @@ export function installAgentAttentionWatch(): () => void {
   const previousDisplay = new Map<string, AgentDisplayState>();
   let approvalSignatures: ReadonlyMap<string, string> = new Map();
   let turnCompletedCounts: ReadonlyMap<string, string> = new Map();
+  let waitingSince: ReadonlyMap<string, number> = new Map();
   let baseline = true;
   let disposed = false;
 
@@ -237,15 +299,18 @@ export function installAgentAttentionWatch(): () => void {
     if (disposed) return;
     const sources = collectSources();
     const attention = useAgentAttention.getState();
+    const nowMs = Date.now();
     const resolution = deriveAttentionResolution(
       previousDisplay,
       sources,
       attention.armedCompletions,
-      { baseline, approvalSignatures, turnCompletedCounts },
+      { baseline, approvalSignatures, turnCompletedCounts, waitingSince, nowMs },
     );
     baseline = false;
     approvalSignatures = resolution.approvalSignatures;
     turnCompletedCounts = resolution.turnCompletedCounts;
+    waitingSince = resolution.waitingSince;
+    const knownWaits = Object.fromEntries(resolution.waitingSince);
     for (const source of sources) {
       previousDisplay.set(source.agentId, resolution.displayStates[source.agentId]);
     }
@@ -255,13 +320,20 @@ export function installAgentAttentionWatch(): () => void {
     // 변화 없으면 set 자체를 생략 — displayStates 정체성이 구독자 재렌더 신호다.
     const prevStates = attention.displayStates;
     const prevKeys = Object.keys(prevStates);
+    const waitsChanged = !sameWaitStarts(attention.waitingSince, knownWaits);
     const changed =
+      waitsChanged ||
       resolution.bumps.length > 0 ||
       resolution.consumedArms.length > 0 ||
       prevKeys.length !== Object.keys(resolution.displayStates).length ||
       prevKeys.some((id) => prevStates[id] !== resolution.displayStates[id]);
     if (changed) {
-      attention.applyAttentionResolution(resolution);
+      attention.applyAttentionResolution({
+        displayStates: resolution.displayStates,
+        bumps: resolution.bumps,
+        consumedArms: resolution.consumedArms,
+        ...(waitsChanged ? { waitingSince: knownWaits } : {}),
+      });
     }
   };
 

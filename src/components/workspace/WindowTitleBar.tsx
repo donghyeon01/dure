@@ -1,4 +1,5 @@
 import { PanelLeft } from "lucide-react";
+import { NextUpChip } from "@/components/agents/NextUpChip";
 import { PaneHistoryNav } from "@/components/workspace/PaneHistoryNav";
 import { BackendSkewChip } from "@/components/workspace/BackendSkewChip";
 import { PinpointButton } from "@/components/design/PinpointButton";
@@ -111,6 +112,9 @@ export function WorkspaceTitleBar({
       <div className="ml-auto flex shrink-0 items-center gap-1 pr-3" data-nodrag>
         {/* Pane balancing is a Space's verb and lives in the Space tab's menu
             (DesktopBar); this cluster is for what spans the app. */}
+        {/* Which agent needs you spans every Space, so it lives here too and
+            draws nothing while nothing waits (NextUpChip). */}
+        <NextUpChip />
         {/* Pinpoint는 pane이 아니라 앱 전역 모드라 창 chrome에 둔다 —
             PinpointButton 헤더 참조. */}
         <PinpointButton />

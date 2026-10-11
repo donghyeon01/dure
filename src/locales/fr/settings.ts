@@ -605,6 +605,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "Focus sur le volet de droite",
 	"settings.shortcuts.cmd.focusPanePrevious": "Focus sur le volet précédent",
 	"settings.shortcuts.cmd.focusPaneNext": "Focus sur le volet suivant",
+	"settings.shortcuts.cmd.goToNextUp": "Aller à l’agent suivant qui vous attend",
 	"settings.hubRelay.reachable.yes": "Terminé — accessible de l'extérieur",
 	"settings.providers.notifySource.title": "Source des notifications d'achèvement",
 	"settings.appearance.title": "Apparence",

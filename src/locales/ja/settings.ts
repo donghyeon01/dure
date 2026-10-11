@@ -605,6 +605,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "右のペインにフォーカス",
 	"settings.shortcuts.cmd.focusPanePrevious": "前のペインにフォーカス",
 	"settings.shortcuts.cmd.focusPaneNext": "次のペインにフォーカス",
+	"settings.shortcuts.cmd.goToNextUp": "あなたを待っている次のエージェントへ移動",
 	"settings.hubRelay.reachable.yes": "完了 — 外から接続できます",
 	"settings.providers.notifySource.title": "完了通知のソース",
 	"settings.appearance.title": "外観",

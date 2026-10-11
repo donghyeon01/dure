@@ -369,6 +369,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "오른쪽 pane으로 포커스",
 	"settings.shortcuts.cmd.focusPanePrevious": "이전 pane으로 포커스",
 	"settings.shortcuts.cmd.focusPaneNext": "다음 pane으로 포커스",
+	"settings.shortcuts.cmd.goToNextUp": "나를 기다리는 다음 에이전트로 이동",
 	"settings.hubRelay.reachable.yes": "완료 — 밖에서 연결됩니다",
 	"settings.providers.notifySource.title": "완료 알림 소스",
 	"settings.appearance.title": "외관",

@@ -636,6 +636,7 @@ export const settingsEnglishTranslations = {
 	"settings.shortcuts.cmd.focusPaneRight": "Focus pane to the right",
 	"settings.shortcuts.cmd.focusPanePrevious": "Focus previous pane",
 	"settings.shortcuts.cmd.focusPaneNext": "Focus next pane",
+	"settings.shortcuts.cmd.goToNextUp": "Go to next agent waiting for you",
 	"settings.hubRelay.reachable.yes": "Yes — reachable from anywhere",
 	"settings.providers.notifySource.title": "Completion notification source",
 	"settings.appearance.title": "Appearance",

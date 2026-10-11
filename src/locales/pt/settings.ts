@@ -605,6 +605,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "Focar painel à direita",
 	"settings.shortcuts.cmd.focusPanePrevious": "Focar painel anterior",
 	"settings.shortcuts.cmd.focusPaneNext": "Focar próximo painel",
+	"settings.shortcuts.cmd.goToNextUp": "Ir para o próximo agente que espera por você",
 	"settings.hubRelay.reachable.yes": "Concluído — acessível de fora",
 	"settings.providers.notifySource.title": "Origem das notificações de conclusão",
 	"settings.appearance.title": "Aparência",

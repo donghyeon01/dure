@@ -35,9 +35,10 @@ function noticeDescription({ app, message }: ProgramStatusNotice): string {
 		: t("agents.programStatus.messageFromProgram", { message });
 }
 
-/** What the program in this terminal says it needs. It stays in the pane the
- * program draws, beside the Host-owned agent glyph, and is never promoted to
- * Host attention, notifications or Spaces. */
+/** What the program in this terminal says it needs, beside the Host-owned
+ * agent glyph. It is never promoted to Host attention, notifications or
+ * Spaces; the next-up list repeats its words, attributed, only on a row Host
+ * attention already put there (NextUpChip). */
 export function ProgramStatusBadge({
 	runtime,
 }: {

@@ -605,6 +605,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "聚焦右侧窗格",
 	"settings.shortcuts.cmd.focusPanePrevious": "聚焦上一个窗格",
 	"settings.shortcuts.cmd.focusPaneNext": "聚焦下一个窗格",
+	"settings.shortcuts.cmd.goToNextUp": "前往下一个等待你的代理",
 	"settings.hubRelay.reachable.yes": "已完成 — 可从外部连接",
 	"settings.providers.notifySource.title": "完成通知来源",
 	"settings.appearance.title": "外观",

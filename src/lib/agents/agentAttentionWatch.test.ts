@@ -372,3 +372,131 @@ describe("deriveAttentionResolution — host 완료 카운터(turnCompletedCount
     expect(r.turnCompletedCounts.get("a")).toBe("3");
   });
 });
+
+describe("deriveAttentionResolution — observed wait and episode times", () => {
+  const approval = {
+    terminalEpoch: "terminal-a",
+    lifecycle: "running",
+    activity: "waiting",
+    attention: "approval_required",
+    attentionId: "approval-1",
+  } as const;
+  const since = (entries: Record<string, number>) => new Map(Object.entries(entries));
+  const signed = (attentionId: string) =>
+    new Map([["a", `hmux:terminal-a:approval_required:${attentionId}`]]);
+
+  it("stamps a wait and its episode when it begins in front of the watcher", () => {
+    const r = deriveAttentionResolution(
+      prev({ a: "working" }),
+      [src("a", { hmux: approval })],
+      {},
+      { nowMs: 1_000 },
+    );
+    expect(r.waitingSince.get("a")).toBe(1_000);
+    expect(r.bumps).toEqual([
+      expect.objectContaining({ agentId: "a", kind: "approval", observedAtMs: 1_000 }),
+    ]);
+  });
+
+  it("keeps the start while the same prompt flaps through work or goes unobserved", () => {
+    const waits = since({ a: 1_000 });
+    const flap = deriveAttentionResolution(
+      prev({ a: "blocked" }),
+      [src("a", { hmux: { ...approval, activity: "working", attention: "none" } })],
+      {},
+      { nowMs: 2_000, waitingSince: waits, approvalSignatures: signed("approval-1") },
+    );
+    expect(flap.waitingSince.get("a")).toBe(1_000);
+    const back = deriveAttentionResolution(
+      prev({ a: "working" }),
+      [src("a", { hmux: approval })],
+      {},
+      { nowMs: 3_000, waitingSince: flap.waitingSince, approvalSignatures: signed("approval-1") },
+    );
+    expect(back.bumps).toEqual([]);
+    expect(back.waitingSince.get("a")).toBe(1_000);
+    const unobserved = deriveAttentionResolution(
+      prev({ a: "unknown" }),
+      [src("a", { hmux: approval })],
+      {},
+      { nowMs: 4_000, waitingSince: waits, approvalSignatures: signed("approval-1") },
+    );
+    expect(unobserved.waitingSince.get("a")).toBe(1_000);
+  });
+
+  it("measures a new prompt afresh, and leaves one met after a gap untimed", () => {
+    const answered = deriveAttentionResolution(
+      prev({ a: "working" }),
+      [src("a", { hmux: approval })],
+      { "sess-a": true },
+      { nowMs: 5_000, waitingSince: since({ a: 1_000 }), approvalSignatures: signed("approval-1") },
+    );
+    expect(answered.waitingSince.get("a")).toBe(5_000);
+    const afterGap = deriveAttentionResolution(
+      prev({ a: "unknown" }),
+      [src("a", { hmux: { ...approval, attentionId: "approval-2" } })],
+      {},
+      { nowMs: 9_000, waitingSince: since({ a: 1_000 }), approvalSignatures: signed("approval-1") },
+    );
+    expect(afterGap.bumps).toHaveLength(1);
+    expect(afterGap.bumps[0]).not.toHaveProperty("observedAtMs");
+    expect(afterGap.waitingSince.has("a")).toBe(false);
+  });
+
+  it("never reads a wait already under way as just begun", () => {
+    const boot = deriveAttentionResolution(
+      new Map(),
+      [src("a", { hmux: approval })],
+      {},
+      { baseline: true, nowMs: 1_000 },
+    );
+    expect(boot.waitingSince.has("a")).toBe(false);
+    for (const before of [undefined, "unknown", "exited"] as const) {
+      const r = deriveAttentionResolution(
+        before === undefined ? new Map() : prev({ a: before }),
+        [src("a", { hmux: approval })],
+        {},
+        { nowMs: 1_000 },
+      );
+      expect(r.bumps).toHaveLength(1);
+      expect(r.waitingSince.has("a")).toBe(false);
+    }
+  });
+
+  it("ends the wait when the agent rests, exits, restarts or disappears", () => {
+    const waits = since({ a: 1_000, b: 1_000, c: 1_000, d: 1_000 });
+    const r = deriveAttentionResolution(
+      prev({ a: "blocked", b: "blocked", c: "blocked", d: "blocked" }),
+      [
+        src("a", { hmux: { ...approval, attention: "none" } }),
+        src("b", { hmux: { ...approval, lifecycle: "exited" } }),
+        src("c", { hmux: { ...approval, lifecycle: "starting" } }),
+      ],
+      {},
+      { nowMs: 2_000, waitingSince: waits },
+    );
+    expect([...r.waitingSince.keys()]).toEqual([]);
+  });
+
+  it("times a finished turn only when the watcher saw it happen", () => {
+    const counts = (count: string) => new Map([["a", count]]);
+    const done = { ...approval, attention: "none", turnCompletedCount: "2" } as const;
+    const live = deriveAttentionResolution(
+      prev({ a: "working" }),
+      [src("a", { hmux: done })],
+      {},
+      { nowMs: 7_000, turnCompletedCounts: counts("1") },
+    );
+    expect(live.bumps).toEqual([
+      expect.objectContaining({ kind: "done", observedAtMs: 7_000 }),
+    ]);
+    const afterSleep = deriveAttentionResolution(
+      prev({ a: "unknown" }),
+      [src("a", { hmux: done })],
+      {},
+      { nowMs: 7_000, turnCompletedCounts: counts("1") },
+    );
+    expect(afterSleep.bumps).toHaveLength(1);
+    expect(afterSleep.bumps[0]).not.toHaveProperty("observedAtMs");
+  });
+});

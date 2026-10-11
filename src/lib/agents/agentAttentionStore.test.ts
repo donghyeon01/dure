@@ -64,4 +64,39 @@ describe("attention store publication", () => {
 			unsubscribe();
 		}
 	});
+
+	it("records when episodes and waits were observed, and prunes them with the agent", () => {
+		const store = useAgentAttention.getState();
+		store.applyAttentionResolution({
+			displayStates: { agent: "blocked" },
+			bumps: [{ agentId: "agent", kind: "approval", observedAtMs: 1_000 }],
+			consumedArms: [],
+			waitingSince: { agent: 1_000 },
+		});
+		expect(useAgentAttention.getState()).toMatchObject({
+			episodeAt: { agent: 1_000 },
+			waitingSince: { agent: 1_000 },
+		});
+		const waits = useAgentAttention.getState().waitingSince;
+		// A round that does not restate the waits leaves them as they were.
+		store.applyAttentionResolution({
+			displayStates: { agent: "waiting" },
+			bumps: [{ agentId: "agent", kind: "done", observedAtMs: 5_000 }],
+			consumedArms: [],
+		});
+		expect(useAgentAttention.getState().waitingSince).toBe(waits);
+		expect(useAgentAttention.getState().episodeAt).toEqual({ agent: 5_000 });
+		// An episode met after an unobserved stretch has no time, not the old one.
+		store.applyAttentionResolution({
+			displayStates: { agent: "waiting" },
+			bumps: [{ agentId: "agent", kind: "done" }],
+			consumedArms: [],
+		});
+		expect(useAgentAttention.getState().episodeAt).toEqual({});
+		store.prune(new Set(), new Set());
+		expect(useAgentAttention.getState()).toMatchObject({
+			episodeAt: {},
+			waitingSince: {},
+		});
+	});
 });

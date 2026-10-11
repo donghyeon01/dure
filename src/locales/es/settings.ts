@@ -605,6 +605,7 @@ export const settings: Record<string, string> = {
 	"settings.shortcuts.cmd.focusPaneRight": "Enfocar panel a la derecha",
 	"settings.shortcuts.cmd.focusPanePrevious": "Enfocar panel anterior",
 	"settings.shortcuts.cmd.focusPaneNext": "Enfocar panel siguiente",
+	"settings.shortcuts.cmd.goToNextUp": "Ir al siguiente agente que te espera",
 	"settings.hubRelay.reachable.yes": "Hecho: accesible desde fuera",
 	"settings.providers.notifySource.title": "Origen de las notificaciones de finalización",
 	"settings.appearance.title": "Apariencia",
