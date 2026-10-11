@@ -36,6 +36,17 @@ File paths, repository, branch and worktree names, URLs, commit messages, prompt
 
 A build without a telemetry key, such as a local development build, shows no question and no switch, and sends nothing.
 
+## The mobile app
+
+The Dure app for iPhone and Android sends no usage data. It has no analytics, crash reporting, advertising identifier or account, so it never asks the question above.
+
+- **Camera**: used only to read the pairing QR code. The image is decoded on the phone and is neither stored nor sent.
+- **Face ID or fingerprint**: used only to confirm it is you before you answer an approval, and before you turn that check on or off. The operating system does the check; Dure only learns whether it passed.
+- **Your computers**: sessions, approvals, diffs and commits travel only between the phone and the computers you paired. The connection uses TLS pinned to that computer's certificate, or SSH with a key you provided. Pairing tokens and SSH keys stay in the app's storage on the phone and can be copied by a device backup.
+- **Relay**: when the phone cannot reach your computer directly, the connection goes through the Dure relay, which we run on [Fly.io](https://fly.io). The relay only joins the two connections. The TLS session runs between the phone and your computer, and the relay never holds your computer's private key, so it cannot read what passes through. It sees your computer's server id and public certificate fingerprint, the IP addresses of both ends, connection times and byte counts. It keeps these in memory while routing and does not write them to a log.
+- **Push notifications (iPhone)**: if you turn them on, the phone gives its Apple push token to your paired computer, which stores it. When an agent needs your approval or finishes its turn, your computer sends that token, the event type and id, your notification setting and the app language to the Dure push service on Fly.io. The service asks Apple to show a fixed message, such as "An agent is waiting for your approval." Session names, prompts and agent output are never part of a notification. The service does not store tokens; to avoid duplicate alerts, it keeps a one-way hash of each delivery for one hour. Turning notifications off removes the token from your computer.
+- **Feedback**: **Send feedback** opens a GitHub issue form in your browser with the app version and the browser's user agent filled in. Nothing is sent unless you submit the form on GitHub.
+
 ## The documentation site
 
 `docs.dureai.dev` sends page views to the same PostHog project so we can see which pages help. That is Mintlify's standard analytics integration; the project discards the request's IP address, and nothing on the docs site is tied to the app's install id.
