@@ -40,11 +40,13 @@ const mocks = vi.hoisted(() => {
 		saveAttachments: vi.fn().mockResolvedValue([]),
 		homeDir: vi.fn(),
 		ensureProject: vi.fn(),
+		openFolder: vi.fn(),
 		catalog: vi.fn().mockResolvedValue([]),
 		paste: vi.fn(),
 		repositoryStatus: vi.fn(),
 	};
 });
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.openFolder }));
 vi.mock("@/lib/files/sessionFileTransfer", () => ({ saveSessionFiles: mocks.saveRemote }));
 vi.mock("@/lib/platform/clipboardImagePaste", () => ({ resolvePaste: mocks.paste }));
 vi.mock("@/lib/ipc/providerCatalog", () => ({
@@ -105,6 +107,7 @@ const codexPersonal: AccountProfile = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.openFolder.mockReset().mockResolvedValue(null);
 	mocks.repositoryStatus.mockReset().mockResolvedValue({ status: "repository" });
 	mocks.homeDir.mockReset().mockResolvedValue(homeProject.path);
 	mocks.ensureProject.mockReset().mockImplementation(async () => {
@@ -141,6 +144,97 @@ async function choosePermission(label: string) {
 }
 
 describe("QuickDispatchOverlay", () => {
+	it.each(["claude", "codex"] as const)("adds a folder from the project menu and dispatches the existing %s draft there", async (provider) => {
+		useStore.setState({ uiPrefs: { ...useStore.getState().uiPrefs, defaultProvider: provider } });
+		mocks.repositoryStatus.mockImplementation(async (path) => ({ status: path === repo.path ? "repository" : "not_repository" }));
+		const folder = { ...homeProject, id: "new-folder", name: "New folder", path: "/work/New folder" };
+		mocks.ensureProject.mockImplementationOnce(async () => {
+			useStore.setState({ projects: [...useStore.getState().projects, folder] });
+			return folder;
+		});
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: repo.id, promptText: "Review this folder", typedName: "review" }} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.chooseFolder") }));
+		fireEvent.change(screen.getByRole("textbox", { name: t("agents.quickDispatch.localFolderPath") }), { target: { value: folder.path } });
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.useFolder") }));
+		await waitFor(() => expect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }).textContent).toContain(folder.name));
+		expect(mocks.ensureProject).toHaveBeenCalledWith(folder.path);
+		expect(mocks.run).not.toHaveBeenCalled();
+		expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Review this folder");
+		expect(screen.getByRole<HTMLButtonElement>("switch").disabled).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.startAgent") }));
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({ projectId: folder.id, promptText: "Review this folder", typedName: "review", providerId: provider, useWorktree: false }));
+	});
+
+	it("keeps a failed folder registration editable without losing the draft or account", async () => {
+		mocks.ensureProject.mockRejectedValueOnce(new Error("Folder does not exist"));
+		mocks.ensureProject.mockResolvedValueOnce(repo);
+		useStore.setState({ accounts: [claudeWork], activeAccounts: { claude: claudeWork.id }, uiPrefs: { ...useStore.getState().uiPrefs, defaultProvider: "claude" } });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: repo.id, promptText: "Keep this draft", typedName: "" }} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.chooseFolder") }));
+		const path = screen.getByRole("textbox", { name: t("agents.quickDispatch.localFolderPath") });
+		fireEvent.change(path, { target: { value: "/missing" } });
+		fireEvent.submit(path.closest("form")!);
+		await screen.findByRole("alert");
+		expect(mocks.begin).not.toHaveBeenCalled();
+		fireEvent.change(path, { target: { value: repo.path } });
+		fireEvent.submit(path.closest("form")!);
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: t("agents.quickDispatch.localFolderPath") })).toBeNull());
+		expect(useStore.getState().projects).toHaveLength(1);
+		expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Keep this draft");
+		expect(screen.getByRole("combobox", { name: t("agents.account.credential") }).textContent).toContain(claudeWork.name);
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.startAgent") }));
+		await waitFor(() => expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({ projectId: repo.id, accountId: claudeWork.id, providerId: "claude" })));
+	});
+
+	it("can cancel the native picker then select a local folder from an SSH context", async () => {
+		const host = { id: "remote", name: "Build", host: "build.test", user: "dev", port: 22, auth: "auto" as const };
+		const remote = { ...repo, id: "remote-project", kind: "ssh" as const, sshHostId: host.id };
+		useStore.setState({ projects: [remote], sshHosts: [host] });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: remote.id, promptText: "Local task", typedName: "" }} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.chooseFolder") }));
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.browseFolder") }));
+		await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: t("agents.quickDispatch.browseFolder") }).disabled).toBe(false));
+		expect(mocks.ensureProject).not.toHaveBeenCalled();
+		mocks.openFolder.mockResolvedValueOnce(homeProject.path);
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.browseFolder") }));
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: t("agents.quickDispatch.localFolderPath") })).toBeNull());
+		expect(mocks.openFolder).toHaveBeenLastCalledWith({ directory: true, multiple: false, defaultPath: undefined, title: t("common.chooseWorkingFolder") });
+		expect(mocks.ensureProject).toHaveBeenCalledWith(homeProject.path);
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.startAgent") }));
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.begin.mock.calls[0][0]).toMatchObject({ projectId: homeProject.id });
+		expect(mocks.begin.mock.calls[0][0]).not.toHaveProperty("remoteTarget");
+	});
+
+	it.each(["browse", "register"])("ignores a cancelled %s result and blocks duplicate submissions", async (operation) => {
+		let finish!: (value: never) => void;
+		const pending = new Promise((resolve) => { finish = resolve; });
+		if (operation === "browse") mocks.openFolder.mockReturnValueOnce(pending);
+		else mocks.ensureProject.mockReturnValueOnce(pending);
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: repo.id, promptText: "Keep original", typedName: "" }} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.chooseFolder") }));
+		const path = screen.getByRole("textbox", { name: t("agents.quickDispatch.localFolderPath") });
+		if (operation === "browse") {
+			fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.browseFolder") }));
+		} else {
+			fireEvent.change(path, { target: { value: homeProject.path } });
+			fireEvent.submit(path.closest("form")!);
+			fireEvent.submit(path.closest("form")!);
+			expect(mocks.ensureProject).toHaveBeenCalledOnce();
+		}
+		fireEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
+		await act(async () => { finish((operation === "browse" ? homeProject.path : homeProject) as never); });
+		expect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }).textContent).toContain(repo.name);
+		expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Keep original");
+		if (operation === "browse") expect(mocks.ensureProject).not.toHaveBeenCalled();
+		expect(mocks.begin).not.toHaveBeenCalled();
+	});
+
 	it("clears the project and starts in the home folder without worktree setup", async () => {
 		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
 		fireEvent.change(screen.getByRole("textbox"), { target: { value: "Plan my day" } });

@@ -10,6 +10,7 @@ import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
 import { ChevronDown, Folder, KeyRound, X } from "lucide-react";
 import { ProviderGlyph, TerminalGlyph } from "@/components/agents/ProviderLogo";
 import { QuickDispatchAdvanced } from "./QuickDispatchAdvanced";
+import { QuickDispatchFolderDialog } from "./QuickDispatchFolderDialog";
 import { type LaunchPermissionSelection, launchPermissionLabel } from "@/lib/agents/providerPermissions";
 import { NameParamChip, QuickDispatchField } from "./QuickDispatchParameters";
 import { DureLoader } from "@/components/ui/dure-loader";
@@ -88,6 +89,8 @@ const WorktreeAgentDialog = lazy(() =>
 	})),
 );
 
+const CHOOSE_FOLDER = "choose-local-folder";
+
 export function QuickDispatchOverlay({
 	open,
 	prefill,
@@ -109,6 +112,7 @@ export function QuickDispatchOverlay({
 
 	const [quickDialogOpen, setQuickDialogOpen] = useState(true);
 	const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
+	const [folderDialogOpen, setFolderDialogOpen] = useState(false);
 
 	// null selects local home; undefined leaves an unmatched SSH context unresolved.
 	const [projectId, setProjectId] = useState<string | null | undefined>(
@@ -220,6 +224,14 @@ export function QuickDispatchOverlay({
 		);
 	};
 
+	const chooseProject = (candidate: Project | null) => {
+		setProjectId(candidate?.id ?? null);
+		if (!candidate || candidate.kind === "local")
+			chooseProvider(resolveDefaultProvider(providerId, availableProviders));
+		setModel(null);
+		setEffort(null);
+	};
+
 	const dismissFailure = (intentId: string) => {
 		completeQuickDispatchIntent(intentId);
 		setJournalIntents(readQuickDispatchIntents());
@@ -242,7 +254,7 @@ export function QuickDispatchOverlay({
 
 	const [attachments, setAttachments] = useState<DroppedFilePayload[]>([]);
 	const submissionRef = useRef<object | null>(null);
-	useEffect(() => () => { submissionRef.current = null; }, [open, quickDialogOpen, projectId, project?.id]);
+	useEffect(() => () => { submissionRef.current = null; }, [open, quickDialogOpen, projectId, project?.id, folderDialogOpen]);
 	const { deferSubmit, remove: removeAttachment, inputProps: attachmentInput } = usePromptAttachments({
 		attachments,
 		setAttachments,
@@ -254,7 +266,7 @@ export function QuickDispatchOverlay({
 	});
 
 	const handleSubmit = async () => {
-		if ((!project && projectId !== null) || !open || !quickDialogOpen || submissionRef.current) return;
+		if ((!project && projectId !== null) || !open || !quickDialogOpen || folderDialogOpen || submissionRef.current) return;
 		if (deferSubmit()) return;
 		if (!text.trim() && attachments.length === 0) return;
 		if ((model && !isProviderModelSelection(model)) || (effort && !isProviderEffortSelection(effort))) {
@@ -503,15 +515,13 @@ export function QuickDispatchOverlay({
 										leadingIcon={<Folder />}
 										className="w-52"
 										onValueChange={(id) => {
+											if (id === CHOOSE_FOLDER) { setFolderDialogOpen(true); return; }
 											const candidate = launchProjects.find((entry) => entry.id === id);
 											if (id && !candidate) return;
-											setProjectId(candidate?.id ?? null);
-											if (!candidate || candidate.kind === "local")
-												chooseProvider(resolveDefaultProvider(providerId, availableProviders));
-											setModel(null);
-											setEffort(null);
+											chooseProject(candidate ?? null);
 										}}
 									>
+										<SelectOption value={CHOOSE_FOLDER}>{t("agents.quickDispatch.chooseFolder")}</SelectOption>
 										<SelectOption value="">{t("agents.quickDispatch.noProject")}</SelectOption>
 										{launchProjects.map((candidate) => (
 											<SelectOption key={candidate.id} value={candidate.id}>
@@ -555,6 +565,7 @@ export function QuickDispatchOverlay({
 									)}
 
 								</div>
+								{project && <p className="break-all px-2 text-xs text-muted-foreground">{project.path}</p>}
 								{projectId === null && (
 									<p className="px-2 text-xs text-muted-foreground">{t("agents.quickDispatch.homeFolderHint")}</p>
 								)}
@@ -639,6 +650,15 @@ export function QuickDispatchOverlay({
 					)}
 				</DialogContent>
 			</Dialog>
+			{open && quickDialogOpen && folderDialogOpen && (
+				<QuickDispatchFolderDialog
+					initialPath={project?.kind === "local" ? project.path : undefined}
+					ensureProjectForPath={ensureProjectForPath}
+					onSelected={(selected) => { chooseProject(selected); setFolderDialogOpen(false); }}
+					onClose={() => setFolderDialogOpen(false)}
+					onReturnFocus={() => composerRef.current?.focus()}
+				/>
+			)}
 
 			{addAgentDialogOpen && (
 				<Suspense fallback={null}>
