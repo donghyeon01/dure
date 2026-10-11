@@ -328,7 +328,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.hebbian.ide.mobile;
 				PRODUCT_NAME = "Dure";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				VALID_ARCHS = arm64;
 			};
 			name = debug;
@@ -424,7 +424,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.hebbian.ide.mobile;
 				PRODUCT_NAME = "Dure";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				VALID_ARCHS = arm64;
 			};
 			name = release;
