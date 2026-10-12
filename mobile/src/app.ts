@@ -900,7 +900,8 @@ export function startApp(root: HTMLElement): () => void {
     };
   }
 
-  const homeVisible = () => (state.screen.kind === "home" || state.screen.kind === "sessions") && !state.addSheet &&
+  const homeVisible = () => (state.screen.kind === "home" || state.screen.kind === "sessions" ||
+    Boolean(view.querySelector(".workspace__list")?.getClientRects().length)) && !state.addSheet &&
     !state.rowMenu && !state.homeMenu && !state.opening && document.visibilityState !== "hidden";
   const sessionCensus = createSessionCensus({
     root,
@@ -915,7 +916,13 @@ export function startApp(root: HTMLElement): () => void {
       }
       writeState(patch);
       if (!visible) return;
-      preserveHomeScroll(view, render);
+      // A wide-window census updates only the list. Rebuilding the detail
+      // would blur its keyboard field (including an in-progress composition).
+      const sidebar = view.querySelector<HTMLElement>(".workspace__list");
+      if (sidebar) {
+        preserveHomeScroll(sidebar, () => sidebar.replaceChildren(renderCensus(), ...launchFab()));
+        bindHomeRefresh();
+      } else preserveHomeScroll(view, render);
     },
     reconcile: async (publish) => { await Promise.all([refreshHubs(publish), refresh(publish)]); },
   });
@@ -933,16 +940,34 @@ export function startApp(root: HTMLElement): () => void {
     }
   }
 
+  /** Home controls are also reachable beside a terminal in a wide window. */
+  function leaveForHomeAction(action: () => void): void {
+    const attachmentId = liveAttachment(state.screen);
+    if (!attachmentId) { action(); return; }
+    const from = state.screen;
+    const detached = leaveTerminal(attachmentId);
+    const generation = sessionOpenGeneration;
+    void detached.then(() => {
+      // A newer selection keeps this screen until its attach resolves. Screen
+      // identity alone cannot protect that pending selection from a late leave.
+      if (!disposed && state.screen === from && sessionOpenGeneration === generation) action();
+    });
+  }
+
   /**
    * The attach whose transcript must stay alive under this screen, if any.
    *
    * Screens with a return path cover the session rather than replacing it.
    * Keep its one record consumer and replica alive, including through Git diffs.
    */
-  function liveAttachment(screen: Screen): string | undefined {
-    if (screen.kind === "terminal") return screen.attached.terminal.attachment_id;
+  function selectedTerminal(screen: Screen): Extract<Screen, { kind: "terminal" }> | undefined {
+    if (screen.kind === "terminal") return screen;
     return "returnTo" in screen && screen.returnTo
-      ? liveAttachment(screen.returnTo) : undefined;
+      ? selectedTerminal(screen.returnTo) : undefined;
+  }
+
+  function liveAttachment(screen: Screen): string | undefined {
+    return selectedTerminal(screen)?.attached.terminal.attachment_id;
   }
 
   function render(): void {
@@ -1016,32 +1041,51 @@ export function startApp(root: HTMLElement): () => void {
       );
     }
 
+    // Both columns exist at every width. Only CSS changes their visibility and
+    // geometry, so fold/rotation/resize never replaces the terminal or its IME.
+    const hasWorkspace = (state.hubs.length > 0 || state.servers.length > 0) &&
+      ["home", "sessions", "terminal", "source-control", "file-diff"].includes(state.screen.kind);
+    let detail = view;
+    if (hasWorkspace) {
+      const home = state.screen.kind === "home" || state.screen.kind === "sessions";
+      const workspace = element("div", home ? "workspace" : "workspace workspace--detail");
+      const sidebar = element("aside", "workspace__list");
+      sidebar.setAttribute("aria-label", t("workspace.sessions"));
+      // Git sheets used to cover the whole phone. Keep that navigation guard
+      // while their fields/confirmation occupy only the detail column.
+      sidebar.inert = state.screen.kind === "source-control" &&
+        (state.screen.sheet !== undefined || state.screen.busy === true);
+      sidebar.append(renderCensus(), ...launchFab());
+      detail = element("div", "workspace__detail");
+      if (home) {
+        const empty = element("section", "workspace__empty");
+        empty.append(element("h1", undefined, t("workspace.selectSession")),
+          element("p", undefined, t("workspace.selectSessionHint")));
+        detail.append(empty);
+      }
+      workspace.append(sidebar, detail);
+      view.append(workspace);
+    }
+
     switch (state.screen.kind) {
       case "home":
       case "sessions": {
-        view.append(renderCensus());
-        view.append(...launchFab());
-        // Over the list, not instead of it: 3096:86354 keeps the sessions
-        // visible behind the scrim, because what is being added is added to
-        // them.
-        if (state.addSheet) view.append(addSheet());
-        // The menu floats over the list with its own scrim.
-        if (state.rowMenu) {
-          const menu = rowMenu(state.rowMenu);
-          if (menu) view.append(menu);
+        if (!hasWorkspace) {
+          view.append(renderCensus());
+          view.append(...launchFab());
         }
         break;
       }
       case "source-control": {
-        view.append(renderSourceControlScreen(state.screen));
+        detail.append(renderSourceControlScreen(state.screen));
         // 시트는 화면 **위에** 그려진다. 아래 목록이 계속 보이는 것이 시안의
         // 요점이다 — 커밋 시트는 어떤 파일에 대한 것인지 말한다.
         const sheet = renderScmSheet(state.screen);
-        if (sheet) view.append(sheet);
+        if (sheet) detail.append(sheet);
         break;
       }
       case "file-diff":
-        view.append(renderFileDiffScreen(state.screen));
+        detail.append(renderFileDiffScreen(state.screen));
         break;
       case "key-strip": {
         // The screen covers the session rather than replacing it: opened from
@@ -1266,12 +1310,19 @@ export function startApp(root: HTMLElement): () => void {
         view.append(renderServerSessions(state.screen));
         break;
       case "terminal":
-        view.append(renderTerminal(state.screen));
+        detail.append(renderTerminal(state.screen));
         break;
     }
 
     if (state.screen.kind === "terminal" && state.panel !== "none") {
       nativeBack.bind(() => openTrayPanel("none"));
+    }
+    if (hasWorkspace) {
+      if (state.addSheet) view.append(addSheet());
+      if (state.rowMenu) {
+        const menu = rowMenu(state.rowMenu);
+        if (menu) view.append(menu);
+      }
     }
     if (state.homeMenu) nativeBack.bind(() => setState({ homeMenu: state.homeMenu === "root" ? undefined : "root" }));
     nativeBack.commit();
@@ -1283,13 +1334,7 @@ export function startApp(root: HTMLElement): () => void {
     // the view because it is a gesture on a node the view does not own after it
     // returns, and every render builds a fresh one — so there is nothing to
     // unbind and nothing that outlives its element.
-    const pullable = view.querySelector<HTMLElement>(".home__body");
-    const strip = pullable?.querySelector<HTMLElement>(".home__pull");
-    if (pullable && strip) {
-      attachPullToRefresh(pullable, strip, () => {
-        if (!state.censusBusy) void census();
-      }, () => pullable.scrollTop);
-    }
+    bindHomeRefresh();
 
     // A drawer opens and closes through a render, so this is where the
     // transcript learns what is standing on it. Before the fit below,
@@ -1317,6 +1362,14 @@ export function startApp(root: HTMLElement): () => void {
         surface?.fit();
       });
     }
+  }
+
+  function bindHomeRefresh(): void {
+    const pullable = view.querySelector<HTMLElement>(".home__body");
+    const strip = pullable?.querySelector<HTMLElement>(".home__pull");
+    if (pullable && strip) attachPullToRefresh(pullable, strip, () => {
+      if (!state.censusBusy) void census();
+    }, () => pullable.scrollTop);
   }
 
   // ---------------------------------------------------------------- 세션 전체
@@ -1878,12 +1931,14 @@ export function startApp(root: HTMLElement): () => void {
     return renderAddSheet({
       dismiss: nativeBack.bind(() => setState({ addSheet: false })),
       startAgent: () => {
-        setState({ addSheet: false });
-        void openLaunch();
+        leaveForHomeAction(() => {
+          setState({ addSheet: false });
+          void openLaunch();
+        });
       },
       // The form, not the server list: the row promises a new connection, and
       // 설정 would land the person one tap short of it.
-      addHost: () =>
+      addHost: () => leaveForHomeAction(() =>
         setState({
           addSheet: false,
           screen: {
@@ -1894,7 +1949,7 @@ export function startApp(root: HTMLElement): () => void {
             // having wandered off.
             returnTo: { kind: "home" },
           },
-        }),
+        })),
     });
   }
 
@@ -2156,6 +2211,7 @@ export function startApp(root: HTMLElement): () => void {
         viewOptions: state.homeOptions ?? loadHomeViewOptions(),
         viewMenu: state.homeMenu,
         opening: state.opening,
+        selectedSessionId: selectedTerminal(state.screen)?.session.session_id,
         // Not having asked and having asked and found nothing are different
         // facts, and so is "no server answered". `census.ts` owns that
         // distinction; this passes its answer through.
@@ -2175,8 +2231,8 @@ export function startApp(root: HTMLElement): () => void {
           saveHomeViewOptions(homeOptions);
           setState({ homeOptions, desktop: previous.groupBy === homeOptions.groupBy ? state.desktop : undefined });
         },
-        pair: () => void startScan(),
-        settings: () => setState({ screen: { kind: "settings" } }),
+        pair: () => leaveForHomeAction(() => void startScan()),
+        settings: () => leaveForHomeAction(() => setState({ screen: { kind: "settings" } })),
         refresh: () => void census(),
         hold: (row, anchor) => setState({ rowMenu: { sessionId: row.sessionId, anchor } }),
       },
@@ -2277,6 +2333,12 @@ export function startApp(root: HTMLElement): () => void {
     returnTo: Screen,
     intent: "open" | "reconnect" = "open",
   ): Promise<void> {
+    const selected = selectedTerminal(state.screen);
+    if (intent === "open" && selected?.session.session_id === session.session_id &&
+      selected.source.kind === source.kind && selected.source.id === source.id) {
+      setState({ screen: selected });
+      return;
+    }
     const generation = ++sessionOpenGeneration;
     const openedFrom = state.screen;
     const isCurrent = (): boolean =>
@@ -3695,10 +3757,9 @@ export function startApp(root: HTMLElement): () => void {
       },
       {
         back: nativeBack.bind(() => {
-          void (async () => {
-            await leaveTerminal(attached.terminal.attachment_id);
+          leaveForHomeAction(() => {
             setState({ screen: returnTo, panel: "none", armed: undefined });
-          })();
+          });
         }),
         transcript: stage => transcriptHost(attached, session, stage),
         enableInput: () => {
@@ -4115,6 +4176,7 @@ export function startApp(root: HTMLElement): () => void {
 
   const refit = () => {
     publishViewport();
+    sessionCensus.sync();
     // iOS scrolls the window itself to bring a focused field into view. On the
     // session screen there is nothing to bring into view — the layout already
     // shrank to the keyboard — and the leftover scroll is what shows up as the

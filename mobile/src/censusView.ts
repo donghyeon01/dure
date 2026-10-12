@@ -23,6 +23,7 @@ export interface CensusModel {
    * be acknowledged, and attaching crosses a network.
    */
   readonly opening?: string;
+  readonly selectedSessionId?: string;
   /** What the SSH census returned. */
   readonly census: readonly CensusRow[];
   /** What the computers this phone has paired with returned. */
@@ -209,7 +210,8 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   const list = element("ul", "list home__list");
   const rows = selected?.rows.filter(row => row.pinned !== true) ?? [];
   const draw = (row: HomeRow): void => {
-    list.append(renderHomeSessionRow(row, options, row.row.sessionId === model.opening, now, actions));
+    list.append(renderHomeSessionRow(row, options, row.row.sessionId === model.opening, now, actions,
+      row.row.sessionId === model.selectedSessionId));
   };
   if (pins.length) {
     const heading = element("li", "list__heading");

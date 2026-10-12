@@ -1,5 +1,8 @@
 /** Canonical English copy. New messages use semantic IDs; legacy source keys remain supported. */
 export const en: Record<string, string> = {
+  "workspace.sessions": "Sessions",
+  "workspace.selectSession": "Select a session",
+  "workspace.selectSessionHint": "Choose a session from the list to open its terminal.",
   "spaces.pane.pinned": "Pinned",
   "pairing.scanner.failed": "The camera scanner could not start. Try again or paste a pairing code.",
   "notifications.push.approvalBody": "An agent is waiting for your approval.",

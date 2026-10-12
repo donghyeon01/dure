@@ -132,7 +132,7 @@ it("does not carry an unsent history draft into a different attachment", async (
   await openTerminal();
   type("old ");
   pick<HTMLButtonElement>(".session__header button").click();
-  await vi.waitFor(() => expect(document.querySelector(".list__open")).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelector(".tray__box")).toBeNull());
   pick<HTMLButtonElement>(".list__open").click();
   await vi.waitFor(() => expect(document.querySelector(".tray__box")).not.toBeNull());
   type("new");

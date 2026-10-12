@@ -11,6 +11,7 @@
     "lint": "biome lint src qa vite.config.ts",
     "qa:design": "vite --config qa/vite.config.ts",
     "test": "vitest run && pnpm test:push-service",
+    "test:wide": "node qa/wide-window.mjs",
     "test:push-service": "node --test push-service/service.test.mjs",
     "tauri": "tauri",
     "ios:init": "tauri ios init",

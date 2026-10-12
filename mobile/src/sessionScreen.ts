@@ -140,7 +140,7 @@ export interface SessionActions {
  */
 function header(model: SessionModel, actions: SessionActions): HTMLElement {
   const bar = element("header", "session__header");
-  const back = element("button", "icon-tap");
+  const back = element("button", "icon-tap session__back");
   back.type = "button";
   back.setAttribute("aria-label", t("뒤로"));
   back.append(glyph(iconChevronLeft, 20));

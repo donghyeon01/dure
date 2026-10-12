@@ -4,17 +4,24 @@ import { viewportFrameRecord } from "@/test/terminalRecordFixtures";
 import { startApp } from "./app";
 
 const transport = vi.hoisted(() => ({
+	attaches: 0,
+	width: 360,
+	title: "QA SCM",
 	reads: 0,
 	holdInitial: false,
 	pending: undefined as ((record: ArrayBuffer) => void) | undefined,
 	sent: [] as Uint8Array[],
 	detach: vi.fn(),
+	beforeAttach: vi.fn(),
+}));
+vi.mock("@tauri-apps/plugin-barcode-scanner", () => ({
+	checkPermissions: async () => "denied",
 }));
 vi.mock("@tauri-apps/api/core", () => ({
 	invoke: async (command: string, args: Record<string, unknown>) => {
 		const session = {
 			session_id: "qa-scm",
-			session_name: "QA SCM",
+			session_name: transport.title,
 			workspace_id: "qa",
 			session_class: "standalone",
 			lifecycle: "ready",
@@ -47,18 +54,21 @@ vi.mock("@tauri-apps/api/core", () => ({
 				return {
 					id: "qa-hub",
 					box_label: "QA",
-					sessions: [{ ...session, box_id: "qa-box", box_label: "QA" }],
+					sessions: [session, { ...session, session_id: "qa-next", session_name: "Next session" }]
+						.map(row => ({ ...row, box_id: "qa-box", box_label: "QA" })),
 					unreachable: [],
 				};
 			case "attach_hub_session":
+				transport.attaches++;
+				await transport.beforeAttach();
 				return {
-					session_id: session.session_id,
+					session_id: (args.session as typeof session).session_id,
 					attestation: "relayed",
 					role: "controller",
 					granted_capabilities: ["terminal_surface_v1"],
 					withheld_over_relay: [],
 					terminal: {
-						attachment_id: "attach-scm",
+						attachment_id: transport.attaches === 1 ? "attach-scm" : "attach-next",
 						terminal_epoch: "epoch-qa",
 						through_output_seq: "1",
 						state_revision: "1",
@@ -77,7 +87,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 				transport.sent.push(Uint8Array.from(args.record as number[]));
 				return null;
 			case "detach_session":
-				return transport.detach();
+				return transport.detach(args.attachmentId);
 			case "hub_git_status":
 				return {
 					read: true,
@@ -140,15 +150,20 @@ function frame(text: string, revision: bigint): ArrayBuffer {
 let dispose: (() => void) | undefined;
 beforeEach(() => {
 	localStorage.clear();
+	transport.attaches = 0;
+	transport.width = 360;
+	transport.title = "QA SCM";
 	transport.reads = 0;
 	transport.holdInitial = false;
 	transport.pending = undefined;
 	transport.sent = [];
 	transport.detach.mockReset();
+	transport.beforeAttach.mockReset();
 	vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+	vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 	vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
 		function (this: HTMLElement) {
-			return this.isConnected ? 360 : 0;
+			return this.isConnected ? transport.width : 0;
 		},
 	);
 	vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
@@ -159,6 +174,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	dispose?.();
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
@@ -167,6 +183,11 @@ function pick<T extends HTMLElement>(selector: string): T {
 	if (!node) throw new Error(`Missing ${selector}`);
 	return node;
 }
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>(done => { resolve = done; });
+	return { promise, resolve };
+}
 async function openTerminal(): Promise<HTMLElement> {
 	const root = document.createElement("div");
 	document.body.replaceChildren(root);
@@ -174,7 +195,10 @@ async function openTerminal(): Promise<HTMLElement> {
 	await vi.waitFor(() =>
 		expect(document.querySelector(".list__open")).not.toBeNull(),
 	);
-	pick<HTMLButtonElement>(".list__open").click();
+	const row = [...root.querySelectorAll<HTMLButtonElement>(".list__open")]
+		.find(button => button.textContent?.includes(transport.title));
+	if (!row) throw new Error("Missing QA session");
+	row.click();
 	await vi.waitFor(() =>
 		expect(root.textContent).toContain("ready-before-scm"),
 	);
@@ -271,7 +295,7 @@ it("restores a reader's scroll position across detached Git renders", async () =
 	expect(terminal.scrollLeft).toBe(212);
 	pick<HTMLButtonElement>(".session__header .icon-tap").click();
 	await vi.waitFor(() =>
-		expect(document.querySelector(".home__settings")).not.toBeNull(),
+		expect(document.querySelector(".session__terminal")).toBeNull(),
 	);
 	expect(transport.detach).toHaveBeenCalledOnce();
 	expect(terminal.textContent).toBe("");
@@ -296,4 +320,128 @@ it("does not forget an unsent command when Git covers its session", async () => 
 	}));
 	pick<HTMLButtonElement>(".tray__toggle--history").click();
 	expect(pick(".history-item__text").textContent).toBe("unsent draft");
+});
+
+it("refits without replacing the attachment, reader, focused IME or history draft", async () => {
+	const terminal = await openTerminal();
+	const box = pick<HTMLTextAreaElement>(".tray__box");
+	box.focus();
+	box.value = "resize draft";
+	box.dispatchEvent(new Event("input", { bubbles: true }));
+	box.dispatchEvent(new CompositionEvent("compositionstart"));
+	for (const width of [520, 360, 840, 704]) {
+		transport.width = width;
+		window.dispatchEvent(new Event("resize"));
+		expect(pick(".session__terminal")).toBe(terminal);
+		expect(pick(".tray__box")).toBe(box);
+		expect(document.activeElement).toBe(box);
+		expect(box.value).toBe("resize draft");
+	}
+	box.dispatchEvent(new CompositionEvent("compositionend"));
+	box.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertLineBreak", cancelable: true }));
+	pick<HTMLButtonElement>(".tray__toggle--history").click();
+	expect(pick(".history-item__text").textContent).toBe("resize draft");
+	expect(transport.attaches).toBe(1);
+	expect(transport.reads).toBe(2);
+	expect(transport.detach).not.toHaveBeenCalled();
+	expect(terminal.textContent).toContain("ready-before-scm");
+});
+
+it("refreshes a visible sidebar without disturbing terminal input or composition", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
+		return (this.classList.contains("workspace__list") ? [{}] : []) as unknown as DOMRectList;
+	});
+	const terminal = await openTerminal();
+	const box = pick<HTMLTextAreaElement>(".tray__box");
+	box.focus();
+	box.dispatchEvent(new CompositionEvent("compositionstart"));
+	box.value = "한";
+	box.dispatchEvent(new InputEvent("input", { isComposing: true }));
+	transport.title = "Updated from Host";
+	await vi.advanceTimersByTimeAsync(2100);
+	expect(pick(".workspace__list").textContent).toContain("Updated from Host");
+	expect(pick(".session__terminal")).toBe(terminal);
+	expect(pick(".tray__box")).toBe(box);
+	expect(document.activeElement).toBe(box);
+	expect(box.value).toBe("한");
+	box.dispatchEvent(new CompositionEvent("compositionend"));
+	expect(transport.attaches).toBe(1);
+	expect(transport.detach).not.toHaveBeenCalled();
+});
+
+it("keeps Git sheet drafts and blocks sidebar navigation until the sheet closes", async () => {
+	const terminal = await openTerminal();
+	pick<HTMLButtonElement>(".session__icon--connection").click();
+	await vi.waitFor(() => expect(document.querySelector(".scm__file")).not.toBeNull());
+	pick<HTMLInputElement>(".scm__file .scm__check").click();
+	pick<HTMLButtonElement>(".prform__footer button").click();
+	expect(pick(".workspace__list").inert).toBe(true);
+	const draft = pick<HTMLTextAreaElement>(".prform__textarea");
+	draft.value = "commit draft";
+	draft.dispatchEvent(new Event("input"));
+	window.dispatchEvent(new Event("resize"));
+	expect(pick(".prform__textarea")).toBe(draft);
+	expect(draft.value).toBe("commit draft");
+	pick<HTMLButtonElement>(".sheet .pair-button--ghost").click();
+	expect(pick(".workspace__list").inert).toBe(false);
+	pick<HTMLButtonElement>(".scm .session__header .icon-tap").click();
+	expect(pick(".session__terminal")).toBe(terminal);
+	expect(transport.attaches).toBe(1);
+});
+
+it("releases the selected attachment when the sidebar opens settings", async () => {
+	await openTerminal();
+	pick<HTMLButtonElement>(".workspace__list .home__settings").click();
+	await vi.waitFor(() => expect(document.querySelector(".session__terminal")).toBeNull());
+	expect(transport.detach).toHaveBeenCalledOnce();
+});
+
+it("detaches before pairing through the sidebar's Settings and Computers", async () => {
+	const terminal = await openTerminal();
+	const detached = deferred();
+	transport.detach.mockReturnValueOnce(detached.promise);
+	pick<HTMLButtonElement>(".workspace__list .home__settings").click();
+	expect(transport.detach).toHaveBeenCalledExactlyOnceWith("attach-scm");
+	expect(pick(".session__terminal")).toBe(terminal);
+	expect(document.querySelector('.settings__row[data-row="computers"]')).toBeNull();
+	detached.resolve();
+	await vi.waitFor(() => expect(document.querySelector('.settings__row[data-row="computers"]')).not.toBeNull());
+	pick<HTMLButtonElement>('.settings__row[data-row="computers"]').click();
+	pick<HTMLButtonElement>(".host-settings__add").click();
+	expect(document.documentElement.dataset.scan).toBe("on");
+	expect(document.querySelector(".session__terminal")).toBeNull();
+	expect(transport.detach).toHaveBeenCalledExactlyOnceWith("attach-scm");
+});
+
+it.each([
+	["settings", "pending"], ["settings", "attached"],
+	["back", "pending"], ["back", "attached"],
+])("ignores delayed %s navigation after a newer session is %s", async (action, completion) => {
+	await openTerminal();
+	const detached = deferred();
+	const attached = deferred();
+	transport.detach.mockReturnValueOnce(detached.promise);
+	transport.beforeAttach.mockReturnValueOnce(attached.promise);
+	pick<HTMLButtonElement>(action === "settings"
+		? ".workspace__list .home__settings" : ".session__header .icon-tap").click();
+	pick<HTMLButtonElement>(".workspace__list .list__open:not(:disabled)").click();
+	expect(transport.attaches).toBe(2);
+	if (completion === "attached") {
+		attached.resolve();
+		await vi.waitFor(() => expect(pick(".session__header").textContent).toContain("Next session"));
+	}
+	detached.resolve();
+	await detached.promise;
+	// Let the transport and leaveTerminal continuations settle before checking
+	// that the old action has not replaced the pending selection's screen.
+	await new Promise(resolve => setTimeout(resolve, 0));
+	const settings = document.querySelector(".settings");
+	const terminal = document.querySelector(".session__terminal");
+	attached.resolve();
+	expect(settings).toBeNull();
+	expect(terminal).not.toBeNull();
+	await vi.waitFor(() => expect(pick(".session__header").textContent).toContain("Next session"));
+	expect(transport.detach).toHaveBeenCalledExactlyOnceWith("attach-scm");
+	expect(transport.attaches).toBe(2);
 });

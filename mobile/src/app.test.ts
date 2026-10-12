@@ -1196,7 +1196,7 @@ describe("세션 출력 배선", () => {
     await settle();
 
     expect(activeAttachmentId).toBe(newerAttachmentId);
-    expect(root.textContent).toContain("newer");
+    expect(root.querySelector(".session__title")?.textContent).toBe("newer");
     const detach = invocations.find(
       (entry) => entry.command === "detach_session" && entry.args.attachmentId !== null,
     );
@@ -1240,7 +1240,7 @@ describe("세션 출력 배선", () => {
     await settle();
 
     expect(activeAttachmentId).toBe(newerAttachmentId);
-    expect(root.textContent).toContain("newer");
+    expect(root.querySelector(".session__title")?.textContent).toBe("newer");
   });
 
   /**
