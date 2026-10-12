@@ -597,3 +597,74 @@ async fn structured_workspace_move_transfers_failed_placement_to_source_folder_r
         Some(movement.source_agent.clone())
     );
 }
+
+#[tokio::test]
+async fn schema_52_upgrade_preserves_legacy_move_and_fences_old_journal_readers() {
+    let root = TempDir::new().unwrap();
+    let path = database_path(&root);
+    let store = initialized_store(&path).await;
+    let plan = move_plan(&store).await;
+    store
+        .initialize_agent_runtime_selection(&native_selection())
+        .await
+        .unwrap();
+    let record = store.admit_agent_runtime_transition(&plan).await.unwrap();
+    let before: String = sqlx::query_scalar(
+        "SELECT record_json FROM agent_runtime_transitions WHERE operation_id = ?1",
+    )
+    .bind(plan.operation_id.as_str())
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&before)
+            .unwrap()
+            .get("targetWorkspace")
+            .is_none()
+    );
+    assert!(!before.contains("replacementWorkspace"));
+    sqlx::query(
+        "UPDATE store_metadata SET schema_version=52, min_reader_version=1, min_writer_version=1",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    store.close().await;
+    let migrated = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        migrated
+            .agent_runtime_transition(&plan.operation_id)
+            .await
+            .unwrap(),
+        Some(record)
+    );
+    let after: String = sqlx::query_scalar(
+        "SELECT record_json FROM agent_runtime_transitions WHERE operation_id = ?1",
+    )
+    .bind(plan.operation_id.as_str())
+    .fetch_one(&migrated.pool)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    let schema = migrated.schema_info();
+    assert_eq!(
+        (
+            schema.schema_version,
+            schema.min_reader_version,
+            schema.min_writer_version
+        ),
+        (53, 53, 53)
+    );
+    // These are the exact persisted admission checks used by a schema52 host.
+    assert!(schema.min_reader_version > 52 && schema.min_writer_version > 52);
+    assert!(std::fs::read_dir(root.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("schema-52-to-53")
+    }));
+    migrated.close().await;
+    let reopened = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(reopened.schema_info(), schema);
+}

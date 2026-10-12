@@ -145,6 +145,7 @@ pub(crate) enum ClaudeStructuredRecordedFailureV1 {
     ManagedCreateNormalizationRequired,
     ManagedCreateRetiredExact,
     ManagedCreateRejected,
+    WorkspaceCommitRejected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -355,6 +356,7 @@ enum ManagedRelayIdentityOutcome {
     RecoveryPending,
 }
 
+#[derive(Clone)]
 struct ClaudeRuntimeContext {
     binding: AgentInteractionBindingV1,
     workspace_id: String,
@@ -366,6 +368,8 @@ enum ClaudeFailedTargetDisposition {
     Launch,
     Stop,
 }
+
+mod workspace_move;
 
 type ClaudeRuntimeSlot = Arc<Mutex<Option<ActiveClaudeRuntime>>>;
 
@@ -414,6 +418,14 @@ where
         &self,
         interaction_session_id: &AgentInteractionSessionIdV1,
     ) -> Result<Option<ClaudeRuntimeContext>, ClaudeStructuredRuntimeErrorV1> {
+        self.runtime_context_at(interaction_session_id, None).await
+    }
+
+    async fn runtime_context_at(
+        &self,
+        interaction_session_id: &AgentInteractionSessionIdV1,
+        target_workspace: Option<&dure_app::WorkspaceRecordV1>,
+    ) -> Result<Option<ClaudeRuntimeContext>, ClaudeStructuredRuntimeErrorV1> {
         let Some(binding) = self
             .conversation_service
             .binding(interaction_session_id)
@@ -445,10 +457,18 @@ where
             .await
             .map_err(|_| ClaudeStructuredRuntimeErrorV1::RuntimeUnavailable)?
             .ok_or(ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
+        let workspace = target_workspace.unwrap_or(&workspace);
+        workspace
+            .validate()
+            .map_err(|_| ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
+        let cwd = exact_directory(Path::new(&workspace.root_path))?;
+        if target_workspace.is_some() && cwd.to_str() != Some(workspace.root_path.as_str()) {
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        }
         Ok(Some(ClaudeRuntimeContext {
             binding,
-            workspace_id: agent.workspace_id.as_str().to_owned(),
-            cwd: exact_directory(Path::new(&workspace.root_path))?,
+            workspace_id: workspace.workspace_id.as_str().to_owned(),
+            cwd,
         }))
     }
 
@@ -956,10 +976,11 @@ where
         request: ClaudeStructuredLaunchRequestV1,
         launch_options: ClaudeStructuredLaunchOptionsV1,
         environment: BTreeMap<String, String>,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<ClaudeStructuredLaunchReceiptV1, ClaudeStructuredReplacementFailureV1> {
         let interaction_session_id = request.interaction_session_id.clone();
         let context = self
-            .runtime_context(&request.interaction_session_id)
+            .runtime_context_at(&request.interaction_session_id, workspace)
             .await?
             .ok_or(ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
         match self
@@ -970,7 +991,7 @@ where
             Err(failure) => {
                 let error = failure.error;
                 let target_quiescence = if replacement_failure_is_quiescent(error) {
-                    self.runtime_context(&interaction_session_id)
+                    self.runtime_context_at(&interaction_session_id, workspace)
                         .await
                         .ok()
                         .flatten()
@@ -1413,9 +1434,20 @@ where
 
     pub(crate) async fn open_replacement(
         &self,
+        request: ClaudeStructuredOpenRequestV1,
+        transition: &AgentRuntimeTransitionRecordV1,
+        provider_state_environment: ProviderStateEnvironment,
+    ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredReplacementFailureV1> {
+        self.open_replacement_at(request, transition, provider_state_environment, None)
+            .await
+    }
+
+    async fn open_replacement_at(
+        &self,
         mut request: ClaudeStructuredOpenRequestV1,
         transition: &AgentRuntimeTransitionRecordV1,
         provider_state_environment: ProviderStateEnvironment,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredReplacementFailureV1> {
         let dispatch = replacement_dispatch(transition, &request)?;
         let environment = prepared_claude_environment(
@@ -1429,6 +1461,9 @@ where
         );
         match dispatch {
             ReplacementDispatch::NativeSource(binding) => {
+                if workspace.is_some() {
+                    return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
+                }
                 self.open_with_native_replacement(
                     request,
                     Some((binding, transition)),
@@ -1437,7 +1472,7 @@ where
                 .await
             }
             ReplacementDispatch::StructuredSource => {
-                self.open_with_structured_replacement(request, transition, environment)
+                self.open_with_structured_replacement(request, transition, environment, workspace)
                     .await
             }
         }
@@ -1448,6 +1483,7 @@ where
         request: ClaudeStructuredOpenRequestV1,
         transition: &AgentRuntimeTransitionRecordV1,
         environment: BTreeMap<String, String>,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredReplacementFailureV1> {
         let source_binding = structured_transition_source_binding(transition)?;
         request
@@ -1465,14 +1501,25 @@ where
         {
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
         }
+        let target_context = workspace
+            .map(|workspace| context.at_workspace(workspace))
+            .transpose()?
+            .unwrap_or_else(|| context.clone());
+        let failed_context = transition
+            .replacement_workspace
+            .as_ref()
+            .map(|workspace| context.at_workspace(workspace))
+            .transpose()?
+            .unwrap_or_else(|| context.clone());
         let failed_binding = self.failed_target_binding(transition)?;
         let binding = if let Some(failed_binding) = failed_binding.as_ref() {
             self.replace_failed_target(
-                &context,
+                &failed_context,
                 failed_binding,
                 &request,
                 transition_target_effect_operation_id(transition),
                 ClaudeFailedTargetDisposition::Launch,
+                &target_context,
             )
             .await?
         } else {
@@ -1481,6 +1528,7 @@ where
                 source_binding,
                 &request,
                 transition_target_effect_operation_id(transition),
+                &target_context,
             )
             .await?
         };
@@ -1513,6 +1561,7 @@ where
                 },
                 ClaudeStructuredLaunchOptionsV1::from_open(&request),
                 environment,
+                workspace,
             )
             .await?;
         let binding = self
@@ -1596,7 +1645,10 @@ where
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
         }
         let context = self
-            .runtime_context(&failed.interaction_session_id)
+            .runtime_context_at(
+                &failed.interaction_session_id,
+                transition.replacement_workspace.as_ref(),
+            )
             .await?
             .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
         let request = ClaudeStructuredOpenRequestV1 {
@@ -1614,6 +1666,7 @@ where
                 &request,
                 &transition.intent.operation_id,
                 ClaudeFailedTargetDisposition::Stop,
+                &context,
             )
             .await?;
         Ok(AgentRuntimeReplacementAuthorityV1(
@@ -1720,6 +1773,7 @@ where
                             &request,
                             transition_target_effect_operation_id(transition),
                             ClaudeFailedTargetDisposition::Launch,
+                            &context,
                         )
                         .await?
                     } else {
@@ -1728,6 +1782,7 @@ where
                             &existing,
                             &request,
                             transition_target_effect_operation_id(transition),
+                            &context,
                         )
                         .await?
                     }
@@ -1774,6 +1829,7 @@ where
                 launch_request,
                 launch_options,
                 transition_environment.ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?,
+                None,
             )
             .await?
         } else {
@@ -1863,6 +1919,7 @@ where
         source: &AgentInteractionBindingV1,
         request: &ClaudeStructuredOpenRequestV1,
         operation_id: &OperationIdV1,
+        target_context: &ClaudeRuntimeContext,
     ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
         if source.agent_id != request.agent_id
             || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
@@ -1901,7 +1958,11 @@ where
             target_revision,
         ) {
             let target = self
-                .read_runtime(&context.binding, &context.workspace_id, &context.cwd)?
+                .read_runtime(
+                    &context.binding,
+                    &target_context.workspace_id,
+                    &target_context.cwd,
+                )?
                 .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
             if !source_runtime.journal.accepts_existing_target_predecessor(
                 &target_identity,
@@ -1916,7 +1977,7 @@ where
         }
         let replaced_at_ms = now_ms()?.max(source.updated_at_ms);
         expected.updated_at_ms = replaced_at_ms;
-        match self.read_runtime(&expected, &context.workspace_id, &context.cwd)? {
+        match self.read_runtime(&expected, &target_context.workspace_id, &target_context.cwd)? {
             Some(target)
                 if source_runtime.journal.accepts_existing_target_predecessor(
                     &target_identity,
@@ -1926,8 +1987,8 @@ where
             None => {
                 self.create_runtime(
                     &expected,
-                    &context.workspace_id,
-                    &context.cwd,
+                    &target_context.workspace_id,
+                    &target_context.cwd,
                     source_runtime
                         .journal
                         .provider_predecessor_for_new_target()?,
@@ -1969,6 +2030,7 @@ where
         request: &ClaudeStructuredOpenRequestV1,
         operation_id: &OperationIdV1,
         disposition: ClaudeFailedTargetDisposition,
+        target_context: &ClaudeRuntimeContext,
     ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
         if failed.agent_id != request.agent_id
             || failed.provider_id.as_str() != CLAUDE_PROVIDER_ID
@@ -2008,7 +2070,11 @@ where
             target_revision,
         ) {
             let mut target = self
-                .read_runtime(&context.binding, &context.workspace_id, &context.cwd)?
+                .read_runtime(
+                    &context.binding,
+                    &target_context.workspace_id,
+                    &target_context.cwd,
+                )?
                 .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
             let completed_terminal_stop =
                 matches!(disposition, ClaudeFailedTargetDisposition::Stop)
@@ -2028,10 +2094,10 @@ where
                 return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
             }
             if matches!(disposition, ClaudeFailedTargetDisposition::Stop) {
-                self.begin_prepared_stop_cleanup(&context.workspace_id, &mut target)
+                self.begin_prepared_stop_cleanup(&target_context.workspace_id, &mut target)
                     .await?;
                 self.complete_stop_cleanup(
-                    &context.cwd,
+                    &target_context.cwd,
                     &target.files.runtime_directory,
                     &mut target.journal,
                 )
@@ -2050,7 +2116,11 @@ where
         expected.runtime = target_runtime.clone();
         expected.binding_revision = target_revision;
         expected.updated_at_ms = replaced_at_ms;
-        let mut target = match self.read_runtime(&expected, &context.workspace_id, &context.cwd)? {
+        let mut target = match self.read_runtime(
+            &expected,
+            &target_context.workspace_id,
+            &target_context.cwd,
+        )? {
             Some(target)
                 if target.journal.provider_predecessor() == replacement_source.as_ref()
                     || matches!(disposition, ClaudeFailedTargetDisposition::Stop)
@@ -2062,8 +2132,8 @@ where
             Some(_) => return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict),
             None => self.create_runtime(
                 &expected,
-                &context.workspace_id,
-                &context.cwd,
+                &target_context.workspace_id,
+                &target_context.cwd,
                 replacement_source,
             )?,
         };
@@ -2076,10 +2146,10 @@ where
             ) {
                 return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
             }
-            self.begin_prepared_stop_cleanup(&context.workspace_id, &mut target)
+            self.begin_prepared_stop_cleanup(&target_context.workspace_id, &mut target)
                 .await?;
             self.complete_stop_cleanup(
-                &context.cwd,
+                &target_context.cwd,
                 &target.files.runtime_directory,
                 &mut target.journal,
             )
@@ -2534,7 +2604,8 @@ fn recorded_failure_error(
         }
         ClaudeStructuredRecordedFailureV1::ManagedCreateNormalizationRequired
         | ClaudeStructuredRecordedFailureV1::ManagedCreateRetiredExact
-        | ClaudeStructuredRecordedFailureV1::ManagedCreateRejected => {
+        | ClaudeStructuredRecordedFailureV1::ManagedCreateRejected
+        | ClaudeStructuredRecordedFailureV1::WorkspaceCommitRejected => {
             ClaudeStructuredRuntimeErrorV1::ManagedCreateRecoveryRequired
         }
     }

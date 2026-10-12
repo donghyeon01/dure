@@ -26,6 +26,14 @@ pub(crate) struct StructuredProviderOpenRequestV1 {
     pub effort: Option<AgentSpawnEffortSelectionV1>,
 }
 
+/// Admission and result use the same reviewed workspace record. Only adapters
+/// that verify the exact provider conversation and cwd may grant this receipt.
+#[derive(Clone, Debug)]
+pub(crate) struct StructuredProviderWorkspaceOpenReceiptV1 {
+    pub binding: AgentInteractionBindingV1,
+    pub workspace: dure_app::WorkspaceRecordV1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StructuredProviderRuntimeErrorKindV1 {
     RequestInvalid,
@@ -59,6 +67,7 @@ pub(crate) struct StructuredProviderRuntimeErrorV1 {
     pub kind: StructuredProviderRuntimeErrorKindV1,
     pub code: String,
     pub target_quiescence: StructuredProviderTargetQuiescenceV1,
+    pub target_workspace: Option<Box<dure_app::WorkspaceRecordV1>>,
     /// Evidence behind `code`, carried from the provider runtime so a failed
     /// spawn can say why rather than only which code. Never matched on.
     pub detail: Option<String>,
@@ -70,8 +79,19 @@ impl StructuredProviderRuntimeErrorV1 {
             kind,
             code: code.into(),
             target_quiescence: StructuredProviderTargetQuiescenceV1::Unknown,
+            target_workspace: None,
             detail: None,
         }
+    }
+
+    pub(crate) fn at_workspace(mut self, workspace: &dure_app::WorkspaceRecordV1) -> Self {
+        if matches!(
+            &self.target_quiescence,
+            StructuredProviderTargetQuiescenceV1::ExactFailedBinding(_)
+        ) {
+            self.target_workspace = Some(Box::new(workspace.clone()));
+        }
+        self
     }
 
     pub(crate) fn with_detail(mut self, detail: Option<String>) -> Self {
@@ -163,6 +183,43 @@ pub(crate) trait StructuredProviderRuntime: Send + Sync {
     /// operations remain available when this refuses a new session.
     fn new_session_availability(&self) -> Result<(), StructuredProviderRuntimeErrorV1> {
         Ok(())
+    }
+
+    fn workspace_move_availability(&self) -> Result<(), StructuredProviderRuntimeErrorV1> {
+        Err(StructuredProviderRuntimeErrorV1::new(
+            StructuredProviderRuntimeErrorKindV1::RequestInvalid,
+            "agent_project_move_structured_unsupported",
+        )
+        .without_target())
+    }
+
+    fn open_workspace_replacement<'a>(
+        &'a self,
+        _request: StructuredProviderOpenRequestV1,
+        _workspace: dure_app::WorkspaceRecordV1,
+        _transition: &'a AgentRuntimeTransitionRecordV1,
+        _environment: ProviderStateEnvironment,
+    ) -> StructuredProviderRuntimeFuture<'a, StructuredProviderWorkspaceOpenReceiptV1> {
+        Box::pin(async {
+            Err(StructuredProviderRuntimeErrorV1::new(
+                StructuredProviderRuntimeErrorKindV1::RequestInvalid,
+                "agent_project_move_structured_unsupported",
+            )
+            .without_target())
+        })
+    }
+
+    /// Quiesce only the exact rejected destination named by the journal.
+    fn quiesce_workspace_target<'a>(
+        &'a self,
+        _transition: &'a AgentRuntimeTransitionRecordV1,
+    ) -> StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async {
+            Err(StructuredProviderRuntimeErrorV1::new(
+                StructuredProviderRuntimeErrorKindV1::RuntimeConflict,
+                "agent_project_move_structured_cleanup_unavailable",
+            ))
+        })
     }
 
     fn open(
@@ -285,6 +342,50 @@ pub(crate) async fn retire_transition_replacement_source(
 }
 
 impl StructuredProviderRuntime for ClaudeStructuredRuntimeManager<SqliteDomainStore> {
+    fn workspace_move_availability(&self) -> Result<(), StructuredProviderRuntimeErrorV1> {
+        self.new_session_availability()
+    }
+
+    fn open_workspace_replacement<'a>(
+        &'a self,
+        request: StructuredProviderOpenRequestV1,
+        workspace: dure_app::WorkspaceRecordV1,
+        transition: &'a AgentRuntimeTransitionRecordV1,
+        environment: ProviderStateEnvironment,
+    ) -> StructuredProviderRuntimeFuture<'a, StructuredProviderWorkspaceOpenReceiptV1> {
+        Box::pin(async move {
+            let receipt = ClaudeStructuredRuntimeManager::open_workspace_replacement(
+                self,
+                claude_request(request),
+                &workspace,
+                transition,
+                environment,
+            )
+            .await
+            .map_err(|failure| {
+                claude_error(failure.error)
+                    .with_detail(failure.detail)
+                    .with_target_quiescence(failure.target_quiescence)
+                    .at_workspace(&workspace)
+            })?;
+            Ok(StructuredProviderWorkspaceOpenReceiptV1 {
+                binding: receipt.binding,
+                workspace,
+            })
+        })
+    }
+
+    fn quiesce_workspace_target<'a>(
+        &'a self,
+        transition: &'a AgentRuntimeTransitionRecordV1,
+    ) -> StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async move {
+            ClaudeStructuredRuntimeManager::quiesce_workspace_target(self, transition)
+                .await
+                .map_err(claude_error)
+        })
+    }
+
     fn open(
         &self,
         request: StructuredProviderOpenRequestV1,

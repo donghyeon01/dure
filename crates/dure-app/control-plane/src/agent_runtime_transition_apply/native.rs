@@ -1128,6 +1128,7 @@ mod tests {
                 failure,
                 replacement_authority:
                     AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
+                replacement_workspace: None,
             }
                 if failure.kind == AgentRuntimeTargetFailureKindV1::IdentityMismatch
                     && failure.provider_code == "hmux_descriptor_malformed"

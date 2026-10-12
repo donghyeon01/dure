@@ -25,7 +25,10 @@ struct AgentRuntimeWorkspaceMoveProjectionV1 {
     operation_id: OperationIdV1,
     committed_selection_revision: i64,
     source_root_path: String,
-    source_authority: dure_app::AgentCheckpointBindingAuthorityV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_authority: Option<dure_app::AgentCheckpointBindingAuthorityV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_structured_binding: Option<dure_app::AgentInteractionBindingV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -158,11 +161,6 @@ async fn committed_workspace_move(
     let Some(movement) = &transition.intent.workspace_move else {
         return Ok(None);
     };
-    let AgentRuntimeBindingAuthorityV1::NativeCli { authority } =
-        &transition.intent.source_authority
-    else {
-        return Ok(None);
-    };
     if transition.state != AgentRuntimeTransitionStateV1::Committed
         || transition.intent.source.agent_id != *agent_id
         || movement.target_workspace != *workspace
@@ -173,6 +171,13 @@ async fn committed_workspace_move(
         operation_id: operation,
         committed_selection_revision: transition.intent.source.revision + 1,
         source_root_path: movement.source_workspace.root_path.clone(),
-        source_authority: authority.clone(),
+        source_authority: match &transition.intent.source_authority {
+            AgentRuntimeBindingAuthorityV1::NativeCli { authority } => Some(authority.clone()),
+            _ => None,
+        },
+        source_structured_binding: match &transition.intent.source_authority {
+            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => Some(binding.clone()),
+            _ => None,
+        },
     }))
 }

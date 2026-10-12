@@ -3107,6 +3107,20 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                 )
                 .await?;
             }
+            52 => {
+                // Journal JSON now carries structured runtime workspace ownership.
+                // Older readers reject those fields and cannot safely repair it.
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    52,
+                    53,
+                    &[],
+                    "migrate_v52_to_v53",
+                )
+                .await?;
+            }
             version => {
                 return Err(DomainStoreErrorV1::Compatibility {
                     code: "unsupported_migration_source",

@@ -14,9 +14,9 @@ use crate::{
 };
 
 pub const MIN_SUPPORTED_STORE_SCHEMA_VERSION: u32 = 1;
-pub const CURRENT_STORE_SCHEMA_VERSION: u32 = 52;
-pub const CURRENT_STORE_READER_VERSION: u32 = 52;
-pub const CURRENT_STORE_WRITER_VERSION: u32 = 52;
+pub const CURRENT_STORE_SCHEMA_VERSION: u32 = 53;
+pub const CURRENT_STORE_READER_VERSION: u32 = 53;
+pub const CURRENT_STORE_WRITER_VERSION: u32 = 53;
 pub const AGENT_CHECKPOINT_SCHEMA_VERSION_V1: u16 = 1;
 
 const MAX_PATH_BYTES: usize = 16 * 1024;
@@ -78,8 +78,8 @@ impl StoreSchemaInfoV1 {
     pub fn current() -> Self {
         Self {
             schema_version: CURRENT_STORE_SCHEMA_VERSION,
-            min_reader_version: MIN_SUPPORTED_STORE_SCHEMA_VERSION,
-            min_writer_version: MIN_SUPPORTED_STORE_SCHEMA_VERSION,
+            min_reader_version: 53,
+            min_writer_version: 53,
         }
     }
 

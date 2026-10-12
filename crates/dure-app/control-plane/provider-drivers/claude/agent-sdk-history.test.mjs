@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -24,6 +24,76 @@ function sdkMessage({ content, parentUuid, role, sessionId, timestamp, uuid }) {
 		uuid,
 	};
 }
+
+test("project moves read the exact account history without copying or changing it", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-move-"));
+	const sessionId = "11111111-1111-4111-8111-111111111111";
+	const original = path.join(root, "account-a", "projects", "original-project");
+	const file = path.join(original, `${sessionId}.jsonl`);
+	try {
+		await mkdir(original, { recursive: true });
+		const content = `${JSON.stringify(
+			sdkMessage({
+				content: "original context",
+				parentUuid: null,
+				role: "user",
+				sessionId,
+				timestamp: "2026-01-02T03:04:05.000Z",
+				uuid: "22222222-2222-4222-8222-222222222222",
+			}),
+		)}\n`;
+		await writeFile(file, content);
+		const reader = createClaudeAgentSdkHistoryReader({ getSessionMessages });
+		const binding = {
+			cwd: "/workspace/destination",
+			env: { CLAUDE_CONFIG_DIR: path.join(root, "account-a") },
+			providerSessionId: sessionId,
+		};
+		const result = await reader(binding);
+		assert.equal(result.status, "complete", result.reason);
+		assert.equal(result.items[0].body.markdown, "original context");
+		assert.equal(await readFile(file, "utf8"), content);
+		assert.deepEqual(await readdir(path.dirname(original)), [
+			"original-project",
+		]);
+		assert.deepEqual(
+			await reader({
+				...binding,
+				env: { CLAUDE_CONFIG_DIR: path.join(root, "account-b") },
+			}),
+			{ status: "incomplete", reason: "history_unavailable" },
+		);
+		const duplicate = path.join(path.dirname(original), "duplicate");
+		await mkdir(duplicate);
+		await writeFile(path.join(duplicate, `${sessionId}.jsonl`), content);
+		assert.equal(
+			(await reader(binding)).status,
+			"incomplete",
+			"ambiguous UUID must fail closed",
+		);
+		await rm(duplicate, { recursive: true });
+		await writeFile(
+			file,
+			content.replaceAll(sessionId, "33333333-3333-4333-8333-333333333333"),
+		);
+		assert.equal(
+			(await reader(binding)).status,
+			"incomplete",
+			"filename alone cannot grant identity",
+		);
+		await rm(file);
+		await writeFile(path.join(root, "outside.jsonl"), content);
+		await symlink(path.join(root, "outside.jsonl"), file);
+		assert.equal(
+			(await reader(binding)).status,
+			"incomplete",
+			"transcript symlinks cannot escape account storage",
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 test("normalization preserves provider IDs and canonical tool wire fields", () => {
 	const sessionId = "11111111-1111-4111-8111-111111111111";

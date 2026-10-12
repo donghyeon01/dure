@@ -24,8 +24,8 @@ use crate::provider_turn_settings::ProviderTurnSettings;
 use crate::structured_provider_runtime::{
     StructuredProviderOpenRequestV1, StructuredProviderRuntime,
     StructuredProviderRuntimeErrorKindV1 as ErrorKind, StructuredProviderRuntimeErrorV1 as Error,
-    StructuredProviderRuntimeFuture, replacement_provider_conversation_ref,
-    transition_owns_structured_source,
+    StructuredProviderRuntimeFuture, StructuredProviderWorkspaceOpenReceiptV1,
+    replacement_provider_conversation_ref, transition_owns_structured_source,
 };
 
 use crate::managed_provider_connection::{AttachedProviderConnection, ManagedProviderConnection};
@@ -191,8 +191,15 @@ where
         };
         let settings =
             ProviderTurnSettings::new(request.permission_mode, request.model, request.effort);
-        self.open_binding(binding, settings, ManagedLaunchMode::Ensure, None, None)
-            .await
+        self.open_binding(
+            binding,
+            settings,
+            ManagedLaunchMode::Ensure,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     async fn attach_existing_runtime(
@@ -221,15 +228,27 @@ where
             ManagedLaunchMode::RecoverExisting,
             Some(selection),
             None,
+            None,
         )
         .await
     }
 
     async fn open_replacement_runtime(
         &self,
+        request: StructuredProviderOpenRequestV1,
+        transition: &AgentRuntimeTransitionRecordV1,
+        provider_state_environment: ProviderStateEnvironment,
+    ) -> Result<AgentInteractionBindingV1, Error> {
+        self.open_replacement_runtime_at(request, transition, provider_state_environment, None)
+            .await
+    }
+
+    async fn open_replacement_runtime_at(
+        &self,
         mut request: StructuredProviderOpenRequestV1,
         transition: &AgentRuntimeTransitionRecordV1,
         provider_state_environment: ProviderStateEnvironment,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<AgentInteractionBindingV1, Error> {
         if !self.configuration.supports_new_sessions() {
             return Err(self.configuration.unavailable_error());
@@ -358,6 +377,7 @@ where
                 ManagedLaunchMode::TransitionEnsure,
                 None,
                 Some(prepared_credential),
+                workspace,
             )
             .await
         {
@@ -422,6 +442,7 @@ where
         mut mode: ManagedLaunchMode,
         expected_selection: Option<&dure_app::AgentRuntimeSelectionV1>,
         prepared_credential: Option<PreparedProviderCredential>,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<AgentInteractionBindingV1, Error> {
         if mode == ManagedLaunchMode::RecoverExisting && !self.configuration.supports_new_sessions()
         {
@@ -435,6 +456,7 @@ where
                     mode,
                     expected_selection,
                     prepared_credential.as_ref(),
+                    workspace,
                 )
                 .await?
             {
@@ -473,6 +495,7 @@ where
         mode: ManagedLaunchMode,
         expected_selection: Option<&dure_app::AgentRuntimeSelectionV1>,
         prepared_credential: Option<&PreparedProviderCredential>,
+        target_workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<ManagedLaunchOutcome, Error> {
         if let Some(expected) = expected_selection {
             let selection = self
@@ -497,8 +520,13 @@ where
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(invalid)?;
+        let workspace = target_workspace.unwrap_or(&workspace);
+        workspace.validate().map_err(|_| invalid())?;
         let cwd = exact_directory(Path::new(&workspace.root_path))?;
-        let workspace_id = agent.workspace_id.as_str().to_owned();
+        if target_workspace.is_some() && cwd.to_str() != Some(workspace.root_path.as_str()) {
+            return Err(conflict());
+        }
+        let workspace_id = workspace.workspace_id.as_str().to_owned();
         let slot = {
             let mut slots = self.slots.lock().await;
             Arc::clone(
@@ -886,7 +914,8 @@ where
         if current != *failed {
             return Err(conflict());
         }
-        self.retire_failed_binding(failed).await?;
+        self.retire_failed_binding_at(failed, transition.replacement_workspace.as_ref())
+            .await?;
         let request = StructuredProviderOpenRequestV1 {
             agent_id: failed.agent_id.clone(),
             execution_profile: transition.intent.target_execution_profile.clone(),
@@ -917,6 +946,14 @@ where
         &self,
         binding: &AgentInteractionBindingV1,
     ) -> Result<(), Error> {
+        self.retire_failed_binding_at(binding, None).await
+    }
+
+    async fn retire_failed_binding_at(
+        &self,
+        binding: &AgentInteractionBindingV1,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
+    ) -> Result<(), Error> {
         let slot = {
             let slots = self.slots.lock().await;
             slots.get(&binding.interaction_session_id).map(Arc::clone)
@@ -944,7 +981,9 @@ where
         let files = runtime_files(&self.configuration, binding)?;
         match claim_managed_connection_driver_for_stop(
             &self.configuration,
-            agent.workspace_id.as_str(),
+            workspace.map_or(agent.workspace_id.as_str(), |workspace| {
+                workspace.workspace_id.as_str()
+            }),
             &files,
         )
         .await
@@ -1010,6 +1049,7 @@ where
                         selection.effort,
                     ),
                     ManagedLaunchMode::RecoverExistingForStop,
+                    None,
                     None,
                     None,
                 )

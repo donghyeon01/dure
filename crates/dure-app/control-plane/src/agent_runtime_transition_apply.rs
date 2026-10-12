@@ -218,6 +218,7 @@ pub(super) enum TargetStartFailure {
     RepairRequired {
         failure: AgentRuntimeTargetFailureV1,
         replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1,
+        replacement_workspace: Option<Box<dure_app::WorkspaceRecordV1>>,
     },
     Retryable(String),
 }
@@ -233,6 +234,7 @@ impl TargetStartFailure {
                 provider_code,
             ),
             replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
+            replacement_workspace: None,
         }
     }
 
@@ -241,8 +243,13 @@ impl TargetStartFailure {
         authority: Option<AgentRuntimeBindingAuthorityV1>,
     ) -> Self {
         match self {
-            Self::RepairRequired { failure, .. } => Self::RepairRequired {
+            Self::RepairRequired {
                 failure,
+                replacement_workspace,
+                ..
+            } => Self::RepairRequired {
+                failure,
+                replacement_workspace,
                 replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1::Replace {
                     authority: authority
                         .map(AgentRuntimeReplacementAuthorityV1)
@@ -251,6 +258,17 @@ impl TargetStartFailure {
             },
             other => other,
         }
+    }
+
+    fn at_workspace(mut self, workspace: Option<Box<dure_app::WorkspaceRecordV1>>) -> Self {
+        if let Self::RepairRequired {
+            replacement_workspace,
+            ..
+        } = &mut self
+        {
+            *replacement_workspace = workspace;
+        }
+        self
     }
 
     pub(super) fn retryable(code: impl Into<String>) -> Self {
@@ -789,30 +807,53 @@ async fn start_structured_target(
             TargetStartFailure::retryable("agent_runtime_structured_profile_unavailable")
         })?;
     let launch = transition.intent.effective_launch_selection();
-    let opened = runtime
-        .open_replacement(
-            StructuredProviderOpenRequestV1 {
-                agent_id: transition.intent.source.agent_id.clone(),
-                execution_profile: transition.intent.target_execution_profile.clone(),
-                permission_mode: transition.intent.effective_permission_mode(),
-                model: launch.model,
-                effort: launch.effort,
-                provider_conversation_ref: transition
-                    .intent
-                    .provider_conversation_ref
-                    .as_option()
-                    .map(str::to_owned),
-            },
-            transition,
-            prepared_profile.environment(),
-        )
+    project_move::preflight(state, &transition.intent)
         .await
-        .map_err(structured_target_failure)?;
+        .map_err(|code| {
+            TargetStartFailure::repair(AgentRuntimeTargetFailureKindV1::TargetInvalid, code)
+        })?;
+    let request = StructuredProviderOpenRequestV1 {
+        agent_id: transition.intent.source.agent_id.clone(),
+        execution_profile: transition.intent.target_execution_profile.clone(),
+        permission_mode: transition.intent.effective_permission_mode(),
+        model: launch.model,
+        effort: launch.effort,
+        provider_conversation_ref: transition
+            .intent
+            .provider_conversation_ref
+            .as_option()
+            .map(str::to_owned),
+    };
+    let (opened, workspace) = if let Some(movement) = &transition.intent.workspace_move {
+        let receipt = runtime
+            .open_workspace_replacement(
+                request,
+                movement.target_workspace.clone(),
+                transition,
+                prepared_profile.environment(),
+            )
+            .await
+            .map_err(structured_target_failure)?;
+        if receipt.workspace != movement.target_workspace {
+            return Err(TargetStartFailure::retryable(
+                "agent_project_move_target_workspace_mismatch",
+            ));
+        }
+        (receipt.binding, Some(receipt.workspace))
+    } else {
+        (
+            runtime
+                .open_replacement(request, transition, prepared_profile.environment())
+                .await
+                .map_err(structured_target_failure)?,
+            None,
+        )
+    };
     advance(
         state,
         transition,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
-            workspace: None,
+            workspace,
             authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                 binding: opened,
             }),
@@ -847,7 +888,7 @@ fn structured_target_failure(error: StructuredProviderRuntimeErrorV1) -> TargetS
             return TargetStartFailure::retryable(error.code);
         }
     };
-    let failure = TargetStartFailure::repair(kind, error.code);
+    let failure = TargetStartFailure::repair(kind, error.code).at_workspace(error.target_workspace);
     match replacement_authority {
         Some(authority) => failure.with_replacement_authority(Some(authority)),
         None => failure,

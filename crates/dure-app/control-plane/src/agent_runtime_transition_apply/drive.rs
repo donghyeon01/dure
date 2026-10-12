@@ -62,12 +62,14 @@ pub(crate) async fn drive_locked(
                     Err(TargetStartFailure::RepairRequired {
                         failure,
                         replacement_authority,
+                        replacement_workspace,
                     }) => {
                         advance(
                             state,
                             &transition,
                             AgentRuntimeTransitionAdvanceV1::RepairRequired {
-                                replacement_workspace: None,
+                                replacement_workspace: replacement_workspace
+                                    .map(|workspace| *workspace),
                                 failure: failure.clone(),
                                 replacement_authority: replacement_authority.clone(),
                             },
@@ -79,7 +81,7 @@ pub(crate) async fn drive_locked(
                 }
             }
             AgentRuntimeTransitionStateV1::RepairRequired => {
-                native::cleanup_rejected_workspace_target(state, &transition).await?;
+                project_move::cleanup_rejected_target(state, &transition).await?;
                 transition
                     .target_failure
                     .as_ref()
@@ -161,7 +163,7 @@ async fn reject_workspace_target(
         },
     )
     .await?;
-    native::cleanup_rejected_workspace_target(state, &rejected).await?;
+    project_move::cleanup_rejected_target(state, &rejected).await?;
     Ok(TransitionDriveOutcome::RepairRequired)
 }
 

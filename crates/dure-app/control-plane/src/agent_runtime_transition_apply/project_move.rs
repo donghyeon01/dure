@@ -92,7 +92,30 @@ pub(crate) async fn apply(
             .map_err(store_error)?
     };
     let receipt = drive_outcome(drive_locked(state, transition).await?)?;
-    Ok(serde_json::json!({"schemaVersion": 1, "receipt": receipt}))
+    // Read the committed relation while the Agent operation lock is still held.
+    // A planned destination alone is never proof of the provider's placement.
+    let agent = state
+        .store
+        .agent(&body.plan.source.agent_id)
+        .await
+        .map_err(store_error)?
+        .ok_or("agent_project_move_source_unavailable")?;
+    let workspace = state
+        .store
+        .workspace(&agent.workspace_id)
+        .await
+        .map_err(store_error)?
+        .ok_or("agent_runtime_workspace_unavailable")?;
+    if Some(&workspace)
+        != body
+            .plan
+            .workspace_move
+            .as_ref()
+            .map(|movement| &movement.target_workspace)
+    {
+        return Err("agent_project_move_target_workspace_mismatch".into());
+    }
+    Ok(serde_json::json!({"schemaVersion": 1, "receipt": receipt, "workspace": workspace}))
 }
 
 async fn plan(
@@ -109,32 +132,49 @@ async fn plan(
         .await?
         .into_explicit_successor_source()
         .map_err(|_| "agent_project_move_source_unavailable".to_string())?;
-    if source.selection.interaction_profile != AgentInteractionProfileV1::NativeCli {
-        return Err("agent_project_move_structured_unsupported".into());
-    }
-    let AgentRuntimeBindingAuthorityV1::NativeCli { authority } = &source.authority else {
-        return Err("agent_project_move_source_unavailable".into());
-    };
-    // Closed and unreachable are distinct. Even an old close journal does not
-    // grant permission to launch against an unobservable native generation.
-    let inspection = inspect_native_source(state, &source.selection, authority)
-        .await
-        .map_err(|error| error.code().to_string())?;
-    let source_stop_policy = if inspection.is_exited_exact() {
-        AgentRuntimeSourceStopPolicyV1::Preserve
-    } else {
-        let observed = inspection
-            .managed_stop_quiescence_fence()
-            .map_err(|_| "agent_runtime_source_busy".to_string())?;
-        AgentRuntimeSourceStopPolicyV1::PreserveObserved {
-            runtime_revision: observed.runtime_revision(),
-            observed_through_output_seq: observed.observed_through_output_seq(),
+    let (source_stop_policy, conversation) = match &source.authority {
+        AgentRuntimeBindingAuthorityV1::NativeCli { authority } => {
+            // An unreachable generation cannot grant a new launch.
+            let inspection = inspect_native_source(state, &source.selection, authority)
+                .await
+                .map_err(|error| error.code().to_string())?;
+            let policy = if inspection.is_exited_exact() {
+                AgentRuntimeSourceStopPolicyV1::Preserve
+            } else {
+                let observed = inspection
+                    .managed_stop_quiescence_fence()
+                    .map_err(|_| "agent_runtime_source_busy".to_string())?;
+                AgentRuntimeSourceStopPolicyV1::PreserveObserved {
+                    runtime_revision: observed.runtime_revision(),
+                    observed_through_output_seq: observed.observed_through_output_seq(),
+                }
+            };
+            (
+                policy,
+                AgentProviderConversationPlanV1::from_option(
+                    authority.binding.provider_conversation_id.clone(),
+                )
+                .map_err(store_error)?,
+            )
+        }
+        AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
+            state
+                .structured_runtimes
+                .resolve(&source.selection.provider_id)
+                .ok_or("agent_project_move_structured_unsupported")?
+                .workspace_move_availability()
+                .map_err(|error| error.code)?;
+            // The exact source binding and idle drain are rechecked under the
+            // journal's stop boundary; admission prevents new source input.
+            (
+                AgentRuntimeSourceStopPolicyV1::Preserve,
+                AgentProviderConversationPlanV1::from_option(
+                    binding.provider_conversation_ref.clone(),
+                )
+                .map_err(store_error)?,
+            )
         }
     };
-    let conversation = AgentProviderConversationPlanV1::from_option(
-        authority.binding.provider_conversation_id.clone(),
-    )
-    .map_err(store_error)?;
     if conversation.as_option().is_none() {
         return Err("agent_runtime_provider_conversation_unavailable".into());
     }
@@ -221,13 +261,19 @@ async fn plan(
     };
     intent.validate().map_err(store_error)?;
     preflight(state, &intent).await?;
-    native::preflight_target(
+    admission::preflight_transition_target(
         state,
         &selection,
+        &intent.target_execution_profile,
         &intent.effective_launch_selection(),
-        &selection.permission_mode,
-        intent.provider_conversation_ref.as_option(),
-    )?;
+        match selection.interaction_profile {
+            AgentInteractionProfileV1::NativeCli => TransitionKind::NativeTarget,
+            AgentInteractionProfileV1::StructuredProtocol => TransitionKind::StructuredTarget,
+        },
+        true,
+        &intent.provider_conversation_ref,
+    )
+    .await?;
     Ok(intent)
 }
 
@@ -255,36 +301,45 @@ pub(super) async fn preflight(
     }
     // Verify the same provider adapter contract before stopping the source.
     // Launch and recovery will consume this shared renderer again.
-    let launch = intent.effective_launch_selection();
-    let mut provider = state
-        .agent_providers
-        .session_launch_plan(
+    if intent.target_interaction_profile == AgentInteractionProfileV1::StructuredProtocol {
+        state
+            .structured_runtimes
+            .resolve(&intent.source.provider_id)
+            .ok_or("agent_project_move_structured_unsupported")?
+            .workspace_move_availability()
+            .map_err(|error| error.code)?;
+    } else {
+        let launch = intent.effective_launch_selection();
+        let mut provider = state
+            .agent_providers
+            .session_launch_plan(
+                &intent.source.provider_id,
+                &intent.effective_permission_mode(),
+                launch.model.as_ref(),
+                launch.effort.as_ref(),
+                intent.provider_conversation_ref.as_option(),
+                hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            )
+            .map_err(|error| error.code.as_str().to_owned())?
+            .ok_or("agent_runtime_native_profile_unavailable")?;
+        dure_provider_adapter::native_provider_project_move(
             &intent.source.provider_id,
-            &intent.effective_permission_mode(),
-            launch.model.as_ref(),
-            launch.effort.as_ref(),
-            intent.provider_conversation_ref.as_option(),
-            hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            &mut provider,
+            std::path::Path::new(&movement.target_workspace.root_path),
         )
-        .map_err(|error| error.code.as_str().to_owned())?
-        .ok_or("agent_runtime_native_profile_unavailable")?;
-    dure_provider_adapter::native_provider_project_move(
-        &intent.source.provider_id,
-        &mut provider,
-        std::path::Path::new(&movement.target_workspace.root_path),
-    )
-    .map_err(|error| error.as_str().to_owned())?;
-    if let Some((minimum, maximum_exclusive)) =
-        dure_provider_adapter::native_provider_project_move_version_range(
-            &intent.source.provider_id,
-        )
-    {
-        crate::provider_executable::require_version_range(
-            &provider.launch.executable,
-            minimum,
-            maximum_exclusive,
-        )
-        .await?;
+        .map_err(|error| error.as_str().to_owned())?;
+        if let Some((minimum, maximum_exclusive)) =
+            dure_provider_adapter::native_provider_project_move_version_range(
+                &intent.source.provider_id,
+            )
+        {
+            crate::provider_executable::require_version_range(
+                &provider.launch.executable,
+                minimum,
+                maximum_exclusive,
+            )
+            .await?;
+        }
     }
     let credential = state
         .credential_profiles
@@ -308,4 +363,31 @@ pub(super) async fn preflight(
     .await
     .map_err(|_| "agent_project_move_history_unavailable")?
     .map_err(str::to_owned)
+}
+
+/// Rejected targets retain their exact authority and placement across restarts.
+pub(super) async fn cleanup_rejected_target(
+    state: &ServiceState,
+    transition: &AgentRuntimeTransitionRecordV1,
+) -> Result<(), String> {
+    let Some(movement) = &transition.intent.workspace_move else {
+        return Ok(());
+    };
+    match &transition.replacement_authority {
+        Some(AgentRuntimeReplacementAuthorityV1(
+            AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. },
+        )) => {
+            if transition.replacement_workspace.as_ref() != Some(&movement.target_workspace) {
+                return Err("agent_project_move_target_workspace_mismatch".into());
+            }
+            state
+                .structured_runtimes
+                .resolve(&transition.intent.source.provider_id)
+                .ok_or("agent_project_move_structured_unsupported")?
+                .quiesce_workspace_target(transition)
+                .await
+                .map_err(|error| error.code)
+        }
+        _ => native::cleanup_rejected_workspace_target(state, transition).await,
+    }
 }

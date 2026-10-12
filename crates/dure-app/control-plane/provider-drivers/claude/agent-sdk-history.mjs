@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
+import { constants } from "node:fs";
 import path from "node:path";
 
 const MAX_SOURCE_MESSAGES = 2_048;
 const MAX_HISTORY_BYTES = 4 * 1024 * 1024;
 const MAX_STORE_BYTES = 64 * 1024 * 1024;
 const MAX_STORE_ENTRIES = 65_536;
+const MAX_PROJECT_ENTRIES = 131_072;
 const MAX_HISTORY_ITEMS = 2_048;
 const MAX_HISTORY_ITEM_BYTES = 128 * 1024;
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -265,7 +267,49 @@ function timestamp(value) {
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function readOnlySessionStore(root, providerSessionId, timestamps, sourceState) {
+// The SDK's exact UUID resume spans projects. Keep its history reader on the
+// same account-local contract without materializing or rewriting transcripts.
+async function exactAccountTranscript(root, providerSessionId) {
+	let directory;
+	try {
+		directory = await fs.opendir(path.join(root, "projects"));
+	} catch (error) {
+		if (error?.code === "ENOENT") return null;
+		throw error;
+	}
+	let found = null;
+	let count = 0;
+	for await (const project of directory) {
+		if (++count > MAX_PROJECT_ENTRIES)
+			throw new Error("dure_claude_history_store_bounds_exceeded");
+		if (!project.isDirectory()) continue;
+		const target = path.join(
+			root,
+			"projects",
+			project.name,
+			`${providerSessionId}.jsonl`,
+		);
+		let metadata;
+		try {
+			metadata = await fs.lstat(target);
+		} catch (error) {
+			if (error?.code === "ENOENT") continue;
+			throw error;
+		}
+		if (!metadata.isFile() || found !== null) {
+			throw new Error("dure_claude_history_store_identity_mismatch");
+		}
+		found = { target, metadata };
+	}
+	return found;
+}
+
+function readOnlySessionStore(
+	root,
+	providerSessionId,
+	timestamps,
+	sourceState,
+) {
 	return Object.freeze({
 		async append() {
 			throw new Error("dure_claude_history_store_read_only");
@@ -279,39 +323,45 @@ function readOnlySessionStore(root, providerSessionId, timestamps, sourceState) 
 			) {
 				throw new Error("dure_claude_history_store_identity_mismatch");
 			}
-			const target = path.join(
-				root,
-				"projects",
-				key.projectKey,
-				`${providerSessionId}.jsonl`,
+			const found = await exactAccountTranscript(root, providerSessionId);
+			if (found === null) return null;
+			const handle = await fs.open(
+				found.target,
+				constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
 			);
-			let handle;
-			try {
-				handle = await fs.open(target, "r");
-			} catch (error) {
-				if (error?.code === "ENOENT") return null;
-				throw error;
-			}
 			try {
 				const metadata = await handle.stat();
-				if (!metadata.isFile()) {
+				if (
+					!metadata.isFile() ||
+					metadata.dev !== found.metadata.dev ||
+					metadata.ino !== found.metadata.ino ||
+					metadata.size > MAX_STORE_BYTES
+				) {
 					throw new Error("dure_claude_history_store_not_file");
 				}
 				sourceState.present = true;
 				const entries = [];
 				let bytes = 0;
 				for await (const line of handle.readLines()) {
+					bytes += Buffer.byteLength(line, "utf8") + 1;
+					if (bytes > MAX_STORE_BYTES)
+						throw new Error("dure_claude_history_store_bounds_exceeded");
 					if (line.length === 0) continue;
 					const entry = JSON.parse(line);
 					if (!plainObject(entry) || typeof entry.type !== "string") {
 						throw new Error("dure_claude_history_store_payload_invalid");
 					}
-					if (!SDK_HISTORY_ENTRY_TYPES.has(entry.type) || typeof entry.uuid !== "string") {
-						continue;
+					if (
+						entry.sessionId !== undefined &&
+						entry.sessionId !== providerSessionId
+					) {
+						throw new Error("dure_claude_history_store_identity_mismatch");
 					}
-					bytes += Buffer.byteLength(line, "utf8");
-					if (bytes > MAX_STORE_BYTES) {
-						throw new Error("dure_claude_history_store_bounds_exceeded");
+					if (
+						!SDK_HISTORY_ENTRY_TYPES.has(entry.type) ||
+						typeof entry.uuid !== "string"
+					) {
+						continue;
 					}
 					entries.push(entry);
 					if (entries.length > MAX_STORE_ENTRIES) {

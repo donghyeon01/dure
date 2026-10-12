@@ -197,8 +197,8 @@ async fn migrate_change(
             "#,
         )
         .bind(i64::from(to_version))
-        .bind(i64::from(1_u32))
-        .bind(i64::from(1_u32))
+        .bind(i64::from(if to_version >= 53 { 53_u32 } else { 1_u32 }))
+        .bind(i64::from(if to_version >= 53 { 53_u32 } else { 1_u32 }))
         .execute(&mut connection)
         .await
         .map_err(|error| map_sqlx(operation, error))?;

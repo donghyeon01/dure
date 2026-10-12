@@ -16,6 +16,15 @@ use crate::claude_sdk_host_supervisor::ClaudeSdkHostSupervisorConfiguration;
 
 #[tokio::test]
 async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor() {
+    dormant_replacement(false).await;
+}
+
+#[tokio::test]
+async fn structured_workspace_move_prepares_and_replays_only_the_exact_destination() {
+    dormant_replacement(true).await;
+}
+
+async fn dormant_replacement(move_workspace: bool) {
     let root = TempDir::new().unwrap();
     let runtime_state = TempDir::new_in("/tmp").unwrap();
     let workspace = root.path().join("workspace");
@@ -285,8 +294,28 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
         .await
         .unwrap()
         .unwrap();
+    let target_context = if move_workspace {
+        let destination = root.path().join("destination");
+        fs::create_dir(&destination).unwrap();
+        let mut workspace = store.workspace(&workspace_id).await.unwrap().unwrap();
+        workspace.workspace_id = WorkspaceIdV1::new("moved-workspace").unwrap();
+        workspace.root_path = destination
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        context.at_workspace(&workspace).unwrap()
+    } else {
+        context.clone()
+    };
     let corrected = manager
-        .replace_stopped_target(&context, &binding, &corrected_request, &operation_id)
+        .replace_stopped_target(
+            &context,
+            &binding,
+            &corrected_request,
+            &operation_id,
+            &target_context,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -299,9 +328,20 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
         corrected_request.execution_profile
     );
     let target = manager
-        .read_runtime(&corrected, workspace_id.as_str(), &workspace)
+        .read_runtime(&corrected, &target_context.workspace_id, &target_context.cwd)
         .unwrap()
         .unwrap();
+    if move_workspace {
+        assert!(
+            manager.read_runtime(&corrected, workspace_id.as_str(), &workspace).is_err(),
+            "a destination journal cannot be reopened at the committed source cwd"
+        );
+        assert_eq!(
+            store.agent(&binding.agent_id).await.unwrap().unwrap().workspace_id,
+            workspace_id,
+            "provider preparation does not publish the Agent's destination"
+        );
+    }
     assert_eq!(target.journal.state(), ClaudeRuntimeLaunchStateV1::Prepared);
     assert_eq!(target.journal.replaces(), None);
     assert_eq!(target.journal.provider_predecessor(), None);
@@ -313,7 +353,13 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
         .unwrap();
     assert_eq!(
         manager
-            .replace_stopped_target(&replay_context, &binding, &corrected_request, &operation_id,)
+            .replace_stopped_target(
+                &replay_context,
+                &binding,
+                &corrected_request,
+                &operation_id,
+                &target_context,
+            )
             .await
             .unwrap(),
         corrected,
@@ -367,6 +413,7 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
                     &binding,
                     &corrected_request,
                     &operation_id,
+                    &target_context,
                 )
                 .await
                 .unwrap(),
@@ -387,7 +434,13 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
         .unwrap();
     assert_eq!(
         manager
-            .replace_stopped_target(&replay_context, &binding, &corrected_request, &operation_id,)
+            .replace_stopped_target(
+                &replay_context,
+                &binding,
+                &corrected_request,
+                &operation_id,
+                &target_context,
+            )
             .await
             .unwrap(),
         corrected,

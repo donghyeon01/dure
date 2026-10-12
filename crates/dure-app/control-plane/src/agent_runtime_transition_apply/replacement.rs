@@ -16,7 +16,7 @@ pub(super) async fn admit_replacement(
     {
         return Err("agent_runtime_transition_conflict".into());
     }
-    native::cleanup_rejected_workspace_target(state, current).await?;
+    project_move::cleanup_rejected_target(state, current).await?;
     let successor_intent = corrected_successor_intent(
         state,
         current,

@@ -11,6 +11,14 @@ async fn setup_provider(
     outcomes: Vec<LaunchOutcome>,
     provider: &'static str,
 ) -> (TempDir, TempDir, ServiceState, FakeLauncher) {
+    setup_provider_mode(outcomes, provider, AgentInteractionProfileV1::NativeCli).await
+}
+
+async fn setup_provider_mode(
+    outcomes: Vec<LaunchOutcome>,
+    provider: &'static str,
+    mode: AgentInteractionProfileV1,
+) -> (TempDir, TempDir, ServiceState, FakeLauncher) {
     let (root, mut state, launcher, _, _) = fixture_with_source_launch_authority(
         outcomes,
         Vec::new(),
@@ -96,9 +104,9 @@ async fn setup_provider(
         .store
         .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
             schema_version: 1,
-            agent_id: agent,
+            agent_id: agent.clone(),
             provider_id: ProviderIdV1::new(provider).unwrap(),
-            interaction_profile: AgentInteractionProfileV1::NativeCli,
+            interaction_profile: mode,
             execution_profile: AgentExecutionProfileV1::CredentialReference {
                 reference_id: registered.reference_id,
                 credential_generation: Some(registered.credential_generation),
@@ -112,6 +120,39 @@ async fn setup_provider(
         })
         .await
         .unwrap();
+    if mode == AgentInteractionProfileV1::StructuredProtocol {
+        let selection = state
+            .store
+            .agent_runtime_selection(&agent)
+            .await
+            .unwrap()
+            .unwrap();
+        state
+            .store
+            .create_agent_interaction(&AgentInteractionBindingV1 {
+                schema_version: 1,
+                interaction_session_id: AgentInteractionSessionIdV1::new("move-interaction")
+                    .unwrap(),
+                agent_id: agent,
+                provider_id: ProviderIdV1::new(provider).unwrap(),
+                execution_profile: selection.execution_profile,
+                provider_conversation_ref: Some(CONVERSATION.into()),
+                runtime: AgentProviderRuntimeFenceV1 {
+                    runtime_generation: "move-source".into(),
+                    provider_epoch: "source-epoch".into(),
+                },
+                timeline_epoch: AgentTimelineEpochV1::new("move-timeline").unwrap(),
+                binding_revision: 1,
+                history_complete: true,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        state.agent_providers = Arc::new(
+            provider_extension::test_structured_agent_provider_registry(provider),
+        );
+    }
     let destination = crate::workspace_git::tests::repository().await;
     register_project(
         &state.projects_catalog_path,
@@ -730,3 +771,5 @@ async fn claude_project_move_refuses_background_auto_attach_versions_before_stop
             .is_none()
     );
 }
+
+mod structured;
