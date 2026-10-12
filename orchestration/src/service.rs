@@ -27,6 +27,29 @@ pub struct InteractionService {
 }
 
 impl InteractionService {
+    pub async fn set_dispatch_deadline(
+        &self,
+        request: crate::contract::SetDispatchDeadlineRequest,
+    ) -> Result<crate::contract::DispatchDeadlineReceipt, ServiceError> {
+        request.validate()?;
+        let fingerprint = fingerprint(&request)?;
+        self.store
+            .set_dispatch_deadline(request, fingerprint)
+            .await
+            .map_err(ServiceError::from)
+    }
+
+    pub async fn dispatch_deadline(
+        &self,
+        request: crate::contract::GetDispatchDeadlineRequest,
+    ) -> Result<crate::contract::DispatchDeadlineReceipt, ServiceError> {
+        request.validate()?;
+        self.store
+            .dispatch_deadline(request)
+            .await
+            .map_err(ServiceError::from)
+    }
+
     pub fn new(store: StoreHandle) -> Self {
         Self { store }
     }

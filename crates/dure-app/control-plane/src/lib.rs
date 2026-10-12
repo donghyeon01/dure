@@ -70,6 +70,7 @@ mod codex_connection_driver_protocol;
 mod codex_structured_connection;
 #[cfg(unix)]
 mod codex_timeline_bridge;
+mod dispatch_deadlines;
 mod hmux_session_inspection;
 mod interaction_wake;
 #[cfg(unix)]

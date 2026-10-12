@@ -1,5 +1,7 @@
 //! Versioned transport-neutral request and response contract.
 
+mod dispatch_deadline;
+pub use dispatch_deadline::*;
 mod event_inspection;
 mod interaction_progress;
 pub use event_inspection::InspectEventsRequest;

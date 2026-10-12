@@ -596,7 +596,18 @@ pub enum DispatchState {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DispatchDeadline {
+    pub due_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overdue_event_cursor: Option<EventCursor>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DispatchRecord {
+    pub coordinator_grant: AudienceGrant,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<DispatchDeadline>,
     pub target: InteractionTarget,
     pub revision: Revision,
     pub state: DispatchState,
@@ -609,6 +620,13 @@ pub struct DispatchRecord {
 
 impl DispatchRecord {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        Audience {
+            grants: vec![self.coordinator_grant.clone()],
+        }
+        .validate(&self.worker_endpoint.participant)?;
+        if let Some(deadline) = &self.deadline {
+            validate_timestamp("deadline.dueAtMs", deadline.due_at_ms)?;
+        }
         self.target.validate()?;
         self.revision.validate()?;
         self.interaction_capability.validate()?;

@@ -1,4 +1,5 @@
 mod create_run;
+pub(crate) mod deadlines;
 
 use std::collections::BTreeMap;
 
@@ -457,6 +458,32 @@ impl WorkflowInteractionStore {
 }
 
 impl Store for WorkflowInteractionStore {
+    fn set_dispatch_deadline(
+        &self,
+        request: agent_orchestration::contract::SetDispatchDeadlineRequest,
+        fingerprint: String,
+    ) -> StoreFuture<'_, agent_orchestration::contract::DispatchDeadlineReceipt> {
+        let authority = request.target.authority.clone();
+        Box::pin(async move {
+            self.mutate(&authority, |state| {
+                state.set_dispatch_deadline(request, fingerprint)
+            })
+            .await
+        })
+    }
+
+    fn dispatch_deadline(
+        &self,
+        request: agent_orchestration::contract::GetDispatchDeadlineRequest,
+    ) -> StoreFuture<'_, agent_orchestration::contract::DispatchDeadlineReceipt> {
+        Box::pin(async move {
+            self.inspect(&request.target.authority, |state| {
+                state.dispatch_deadline(&request)
+            })
+            .await
+        })
+    }
+
     fn create_run<'a>(
         &'a self,
         request: CreateRunRequest,
@@ -2887,6 +2914,8 @@ async fn load_state(
             authority.tenant_ref,
             authority.revision,
             authority.blocked_by,
+            authority.deadline_json,
+            authority.coordinator_grant_json,
             authority.interaction_capability,
             authority.completion_capability,
             authority.worker_endpoint_json,
@@ -2950,6 +2979,15 @@ async fn load_state(
             decode_store(row.try_get("worker_endpoint_json").map_err(|_| corrupt())?)?;
         restore_wake_capability(&mut worker_endpoint);
         let record = DispatchRecord {
+            coordinator_grant: decode_store(
+                row.try_get("coordinator_grant_json")
+                    .map_err(|_| corrupt())?,
+            )?,
+            deadline: row
+                .try_get::<Option<String>, _>("deadline_json")
+                .map_err(|_| corrupt())?
+                .map(decode_store)
+                .transpose()?,
             target: InteractionTarget {
                 authority: authority.clone(),
                 run_id: RunId::new(row.try_get::<String, _>("run_id").map_err(|_| corrupt())?)
@@ -3106,6 +3144,7 @@ async fn persist_state(
             SET revision = ?1,
                 blocked_by = ?2,
                 worker_endpoint_json = ?3,
+                deadline_json = ?7,
                 updated_at_ms = MAX(updated_at_ms, ?4)
             WHERE authority_key = ?5 AND dispatch_id = ?6
             "#,
@@ -3116,6 +3155,7 @@ async fn persist_state(
         .bind(latest_event_at)
         .bind(&key)
         .bind(dispatch.target.dispatch_id.as_str())
+        .bind(dispatch.deadline.as_ref().map(encode_store).transpose()?)
         .execute(&mut *connection)
         .await
         .map_err(|_| unavailable())?;

@@ -273,3 +273,27 @@ not an exit or failure. Old Hosts and unsupported providers omit this evidence.
 Read/acknowledgement remains durable; native turn history is bounded to the latest
 32 wake receipts in the current provider observation source and Host generation.
 Neither this observation nor its absence authorizes interruption.
+
+## Dispatch deadlines
+
+Use `orchestration_dispatch_deadline_set` to set or clear a deadline for one exact
+Dispatch. Resolve context first, then supply `body` with `schemaVersion: 1`,
+`target: context.target`, `writeCapability: context.interactionCapability`,
+`expectedDispatchRevision: context.dispatchRevision`, a unique `idempotencyKey`,
+`dueAtMs` (absolute Unix milliseconds, or explicit `null` to clear), and
+`changedAtMs` (current Unix milliseconds). Reuse the entire body after an
+uncertain response. Setting a deadline revises the Dispatch; refresh context
+before further writes or completion.
+
+`orchestration_dispatch_deadline_get` accepts `schemaVersion: 1`, the exact
+`target`, and `readCapability: context.interactionCapability`. It returns the
+current deadline, revision, state and any committed `overdueEventCursor` without
+acknowledging inbox events. CLI fallbacks are `dispatch.deadline.set` and
+`dispatch.deadline.get` via `dure orchestration invoke`.
+
+The backend checks every five seconds while running and catches up after
+restart. Overdue incomplete work, including blocked Decisions, queues one
+informational coordinator Message per setting. Existing GUI/inbox readers can
+render it. Completion remains authoritative: overdue is neither failure nor
+permission to interrupt. No urgent provider-turn delivery is implied. An older
+backend refuses with missing `orchestration.dispatch.deadline_v1` capability.

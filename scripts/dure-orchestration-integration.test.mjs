@@ -1252,7 +1252,7 @@ describe("immutable generic orchestration integration", () => {
     ]);
   });
 
-  it.each(["events.read", "interaction.progress"])("carries %s over local and SSH backend profiles with negotiated capabilities", async (method) => {
+  it.each(["events.read", "interaction.progress", "dispatch.deadline.set", "dispatch.deadline.get"])("carries %s over local and SSH backend profiles with negotiated capabilities", async (method) => {
     const root = fixture();
     const semantic = createOrchestrationRequest({
       method,
@@ -1353,12 +1353,12 @@ describe("immutable generic orchestration integration", () => {
       {
         operation: "orchestration.invoke",
         body: semantic,
-        requiredCapabilities: ["orchestration.invoke", ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
+        requiredCapabilities: ["orchestration.invoke", ...(method.startsWith("dispatch.deadline.") ? ["orchestration.dispatch.deadline_v1"] : []), ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
       },
       {
         operation: "orchestration.invoke",
         body: semantic,
-        requiredCapabilities: ["orchestration.invoke", ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
+        requiredCapabilities: ["orchestration.invoke", ...(method.startsWith("dispatch.deadline.") ? ["orchestration.dispatch.deadline_v1"] : []), ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
       },
     ]);
     expect(observed.map(({ profile }) => profile.transport.kind)).toEqual([
@@ -1892,6 +1892,8 @@ describe("immutable generic orchestration integration", () => {
     });
     expect(result).toMatchObject({
       tools: [
+        { name: "orchestration_dispatch_deadline_set" },
+        { name: "orchestration_dispatch_deadline_get" },
         { name: "orchestration_context_get_current" },
         { name: "orchestration_interaction_open" },
         { name: "orchestration_message_open_exact_session" },
@@ -1931,6 +1933,27 @@ describe("immutable generic orchestration integration", () => {
       additionalProperties: false,
     });
     expect(eventRead.inputSchema.properties).not.toHaveProperty("body");
+  });
+
+  it.each(["set", "get"])("publishes and forwards the exact deadline %s contract", async (operation) => {
+    const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+    const name = `orchestration_dispatch_deadline_${operation}`;
+    const schema = catalogue.tools.find((tool) => tool.name === name).inputSchema.properties.body;
+    expect(schema.required).toContain("target");
+    if (operation === "set") {
+      expect(schema.required).toContain("dueAtMs");
+      expect(schema.properties.dueAtMs.type).toEqual(["integer", "null"]);
+      expect(schema.required).toContain("expectedDispatchRevision");
+    }
+    const body = { schemaVersion: 1, target: { dispatchId: "exact-dispatch", generation: 3 }, dueAtMs: null };
+    const receipt = { deadline: null, dispatchRevision: 4, dispatchState: "active", idempotent: false };
+    const request = vi.fn(async (_endpoint, wire) => {
+      expect(wire).toEqual({ apiVersion: "dure.orchestration/v1", method: `dispatch.deadline.${operation}`, body });
+      return { apiVersion: wire.apiVersion, method: wire.method, receipt };
+    });
+    const result = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: { name, arguments: { body } } }, { DURE_BACKEND_PROFILE: "local" }, { request });
+    expect(result.structuredContent.receipt).toEqual(receipt);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("inspects interaction progress through one read-only request without inbox or wake side effects", async () => {

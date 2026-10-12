@@ -1,3 +1,4 @@
+mod dispatch_deadline;
 mod event_reads;
 mod interaction_progress;
 
@@ -53,6 +54,7 @@ pub struct IdempotencyEntry {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "operation", content = "receipt")]
 pub enum StoredReceipt {
+    Deadline(crate::contract::DispatchDeadlineReceipt),
     Create(Box<CreateRunReceipt>),
     Open(OpenInteractionReceipt),
     Answer(AnswerDecisionReceipt),
@@ -290,6 +292,8 @@ impl StoreState {
             integration_receipt: context.integration_receipt.clone(),
         };
         let dispatch = DispatchRecord {
+            coordinator_grant: context.coordinator_grant.clone(),
+            deadline: None,
             target: context.target.clone(),
             revision: Revision::INITIAL,
             state: DispatchState::Active,

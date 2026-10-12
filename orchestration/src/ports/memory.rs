@@ -48,6 +48,23 @@ impl InMemoryStore {
 }
 
 impl Store for InMemoryStore {
+    fn set_dispatch_deadline(
+        &self,
+        request: crate::contract::SetDispatchDeadlineRequest,
+        fingerprint: String,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt> {
+        Box::pin(
+            async move { self.mutate(|state| state.set_dispatch_deadline(request, fingerprint)) },
+        )
+    }
+
+    fn dispatch_deadline(
+        &self,
+        request: crate::contract::GetDispatchDeadlineRequest,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt> {
+        Box::pin(async move { self.inspect(|state| state.dispatch_deadline(&request)) })
+    }
+
     fn create_run<'a>(
         &'a self,
         request: CreateRunRequest,

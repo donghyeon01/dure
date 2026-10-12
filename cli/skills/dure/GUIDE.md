@@ -584,3 +584,35 @@ If `dure send` reports `hmux_command_input_process_timeout`, delivery is unknown
 Use `dure read` and `dure inspect` to inspect the target before sending again.
 Native failures preserve their delivery state; a missing receipt is not proof
 that nothing reached the terminal. Direct input is never automatically retried.
+
+## Dispatch deadlines
+
+Use `dure orchestration invoke dispatch.deadline.set '<body-json>' --json`
+(or MCP `orchestration_dispatch_deadline_set`) to set one exact dispatch's due
+time. Resolve that dispatch's context first; copy its `target`,
+`interactionCapability` as `writeCapability`, and `dispatchRevision` as
+`expectedDispatchRevision`. Include `schemaVersion: 1`, a unique
+`idempotencyKey`, `dueAtMs` as absolute Unix milliseconds, and `changedAtMs` as
+the current Unix milliseconds. Explicit `dueAtMs: null` clears the deadline.
+Keep the complete body and key unchanged after an uncertain response.
+
+Inspect with `dispatch.deadline.get` (MCP `orchestration_dispatch_deadline_get`):
+`{ "schemaVersion": 1, "target": <exact target>, "readCapability": <interactionCapability> }`.
+Keep capabilities private. Both operations require backend capability
+`orchestration.dispatch.deadline_v1`; an older backend refuses the operation.
+
+The backend checks stored deadlines every five seconds while running and catches
+up after restart. An incomplete dispatch, including one blocked on a Decision,
+receives one overdue observation per deadline setting. The coordinator receives
+a normal informational Message through its existing durable inbox and GUI.
+`deadline.overdueEventCursor` identifies the committed overdue event; `null` or
+an absent cursor means it has not been recorded. Setting/clearing increments the
+dispatch revision, so refresh context before subsequent writes or completion.
+An exact retry returns the original setting receipt; `get` returns current state.
+
+Overdue attention does not interrupt, fail, or complete the worker. Completion
+before the backend's overdue transaction suppresses the notice. Clearing or
+resetting preserves previously recorded notices. Wait timeouts and Host
+`progress_unconfirmed` remain separate observations and never authorize an
+interrupt. Explicit urgent delivery correlated to a provider turn is not
+provided by these deadline operations.

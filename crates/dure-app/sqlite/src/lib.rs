@@ -214,6 +214,13 @@ impl SqliteDomainStore {
         .await
     }
 
+    pub async fn expire_dispatch_deadlines(
+        &self,
+        now_ms: i64,
+    ) -> Result<usize, agent_orchestration::ports::StoreError> {
+        orchestration::deadlines::expire(&self.pool, now_ms).await
+    }
+
     pub fn interaction_service(&self) -> agent_orchestration::service::InteractionService {
         orchestration::interaction_service(self.pool.clone())
     }

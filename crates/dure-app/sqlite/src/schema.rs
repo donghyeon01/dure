@@ -1725,6 +1725,7 @@ CREATE TABLE IF NOT EXISTS workflow_interaction_authorities (
     worker_endpoint_json TEXT NOT NULL,
     worker_session_json TEXT NOT NULL,
     coordinator_grant_json TEXT NOT NULL,
+    deadline_json TEXT,
     coordinator_reply_capability TEXT NOT NULL,
     negotiation_idempotency_key TEXT NOT NULL,
     negotiation_digest TEXT NOT NULL,
@@ -3078,6 +3079,31 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                     51,
                     &[CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES],
                     "migrate_v50_to_v51",
+                )
+                .await?;
+            }
+            51 => {
+                let statements = if table_column_exists(
+                    pool,
+                    "workflow_interaction_authorities",
+                    "deadline_json",
+                )
+                .await?
+                {
+                    vec![]
+                } else {
+                    vec![
+                        "ALTER TABLE workflow_interaction_authorities ADD COLUMN deadline_json TEXT",
+                    ]
+                };
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    51,
+                    52,
+                    &statements,
+                    "migrate_v51_to_v52",
                 )
                 .await?;
             }

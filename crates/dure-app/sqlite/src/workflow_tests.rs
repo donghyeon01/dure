@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+mod deadlines;
 mod launch_tests;
 
 use agent_orchestration::contract::{

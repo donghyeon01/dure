@@ -2577,6 +2577,11 @@ const ORCH_HELP = `dure orchestration — durable interaction service client
   orchestration invoke <method> <body-json> [--backend ID] [--json]
       Call the versioned orchestration API through the selected local/SSH backend.
       DURE_ORCHESTRATION_ENDPOINT selects a hosted HTTPS authority instead.
+      dispatch.deadline.set: exact target, writeCapability, expectedDispatchRevision,
+        idempotencyKey, dueAtMs (Unix ms or null to clear), changedAtMs, schemaVersion: 1.
+      dispatch.deadline.get: exact target, readCapability, schemaVersion: 1.
+      Copy capabilities/revision from dispatch context; see 'dure skills get dure'.
+      Overdue deadlines queue coordinator attention; they never interrupt a worker.
   orchestration status [--json] [--repo PATH] [--backend ID]
   orchestration health [--json] [--repo PATH] [--backend ID]
 

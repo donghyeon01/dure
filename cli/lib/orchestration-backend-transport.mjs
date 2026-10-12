@@ -30,6 +30,7 @@ export async function requestOrchestrationThroughBackendProfile(
       operation: "orchestration.invoke",
       body: request,
       requiredCapabilities: ["orchestration.invoke",
+        ...(["dispatch.deadline.set", "dispatch.deadline.get"].includes(request.method) ? ["orchestration.dispatch.deadline_v1"] : []),
         ...(request.method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : []),
       ],
     },

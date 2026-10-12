@@ -91,6 +91,7 @@
       "sessions.show",
       "orchestration.invoke",
       "orchestration.interaction.progress_v1",
+      "orchestration.dispatch.deadline_v1",
       "plugin.slack",
       "slack.connector.v1",
       "backend.scope.v1",

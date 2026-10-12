@@ -196,6 +196,32 @@ pub(crate) async fn invoke_orchestration(
             serde_json::to_value(answer_exact_session_decision(state, body).await?)
                 .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
         }
+        "dispatch.deadline.set" => {
+            let request = serde_json::from_value(envelope.body)
+                .map_err(|_| BackendDispatchError::terminal("orchestration_request_invalid"))?;
+            serde_json::to_value(
+                state
+                    .store
+                    .interaction_service()
+                    .set_dispatch_deadline(request)
+                    .await
+                    .map_err(orchestration_service_error)?,
+            )
+            .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
+        }
+        "dispatch.deadline.get" => {
+            let request = serde_json::from_value(envelope.body)
+                .map_err(|_| BackendDispatchError::terminal("orchestration_request_invalid"))?;
+            serde_json::to_value(
+                state
+                    .store
+                    .interaction_service()
+                    .dispatch_deadline(request)
+                    .await
+                    .map_err(orchestration_service_error)?,
+            )
+            .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
+        }
         "dispatch.complete" => {
             let request: CompleteDispatchRequest = serde_json::from_value(envelope.body)
                 .map_err(|_| BackendDispatchError::terminal("orchestration_request_invalid"))?;

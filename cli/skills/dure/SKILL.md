@@ -9,7 +9,8 @@ For website inspection and interaction in Dure, load the Browser guide with
 `dure skills get dure-browser`. It owns existing-tab discovery and shared
 control. For coordination, sessions and pane commands, read the guide below.
 For local Markdown or HTML documents, the guide covers `dure client pane open file`
-using the GUI file viewer and its existing HTML isolation.
+using the GUI file viewer and its existing HTML isolation. It also covers
+`dispatch.deadline.set` / `dispatch.deadline.get` for durable coordinator attention.
 
 Use the `dure` executable selected for this session for both the guide and later
 commands. If the session supplies an explicit CLI path, keep using that path;

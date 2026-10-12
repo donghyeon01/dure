@@ -37,6 +37,21 @@ pub struct StoreHandle {
 }
 
 impl StoreHandle {
+    pub(crate) fn set_dispatch_deadline(
+        &self,
+        request: crate::contract::SetDispatchDeadlineRequest,
+        fingerprint: String,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt> {
+        self.inner.set_dispatch_deadline(request, fingerprint)
+    }
+
+    pub(crate) fn dispatch_deadline(
+        &self,
+        request: crate::contract::GetDispatchDeadlineRequest,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt> {
+        self.inner.dispatch_deadline(request)
+    }
+
     pub fn new(store: impl Store + 'static) -> Self {
         Self {
             inner: Arc::new(store),
@@ -142,6 +157,16 @@ pub enum StoreError {
 /// Adapter contract. Mutation methods are invoked only by [`crate::service::InteractionService`].
 /// Each mutation commits every canonical record, receipt, and Event or none of them.
 pub trait Store: Send + Sync {
+    fn set_dispatch_deadline(
+        &self,
+        request: crate::contract::SetDispatchDeadlineRequest,
+        fingerprint: String,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt>;
+    fn dispatch_deadline(
+        &self,
+        request: crate::contract::GetDispatchDeadlineRequest,
+    ) -> StoreFuture<'_, crate::contract::DispatchDeadlineReceipt>;
+
     fn create_run<'a>(
         &'a self,
         request: CreateRunRequest,

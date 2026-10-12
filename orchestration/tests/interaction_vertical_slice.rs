@@ -1,3 +1,6 @@
+#[path = "interaction_vertical_slice/dispatch_deadline.rs"]
+mod dispatch_deadline;
+
 #[path = "interaction_vertical_slice/interaction_progress.rs"]
 mod interaction_progress;
 
@@ -93,6 +96,14 @@ fn endpoint_fence(target: &InteractionTarget) -> WorkerEndpointFence {
 
 fn dispatch(target: &InteractionTarget) -> DispatchRecord {
     DispatchRecord {
+        coordinator_grant: audience(vec![(
+            "participant.coordinator",
+            "capability.inbox.coordinator",
+            vec!["capability.inbox.coordinator"],
+        )])
+        .grants
+        .remove(0),
+        deadline: None,
         target: target.clone(),
         revision: Revision::INITIAL,
         state: DispatchState::Active,
@@ -279,6 +290,20 @@ struct BatchErrorStore {
 }
 
 impl Store for BatchErrorStore {
+    fn set_dispatch_deadline(
+        &self,
+        _: agent_orchestration::contract::SetDispatchDeadlineRequest,
+        _: String,
+    ) -> StoreFuture<'_, agent_orchestration::contract::DispatchDeadlineReceipt> {
+        unreachable!("batch-only fixture")
+    }
+    fn dispatch_deadline(
+        &self,
+        _: agent_orchestration::contract::GetDispatchDeadlineRequest,
+    ) -> StoreFuture<'_, agent_orchestration::contract::DispatchDeadlineReceipt> {
+        unreachable!("batch-only fixture")
+    }
+
     fn create_run<'a>(
         &'a self,
         _request: CreateRunRequest,

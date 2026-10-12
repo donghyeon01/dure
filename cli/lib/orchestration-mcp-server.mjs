@@ -23,6 +23,8 @@ import {
   publishNextWorkDecision,
 } from "./orchestration-next-work.mjs";
 
+import { dispatchDeadlineSetSchema, dispatchDeadlineGetSchema } from "./contracts/dispatch-deadline.mjs";
+
 const identitySchema = { type: "string", minLength: 1 };
 const sessionFields = ["sessionId", "workspaceId", "providerId", "runnerPrincipal", "runnerInstance", "channelEpoch", "hostInstanceId", "terminalEpoch"];
 const interactionReadSchema = {
@@ -42,6 +44,13 @@ const interactionReadSchema = {
   },
 };
 const tools = [
+  ...[
+    ["set", dispatchDeadlineSetSchema, "Set or clear one exact Dispatch deadline. Resolve context first and copy its target, interactionCapability and revision. Reuse the same body/key after an uncertain response. Overdue attention is a durable coordinator Message, never completion or interruption."],
+    ["get", dispatchDeadlineGetSchema, "Read an exact Dispatch deadline, current revision/state and any committed overdue event cursor. This does not acknowledge the coordinator inbox."],
+  ].map(([operation, schema, description]) => ({
+    name: `orchestration_dispatch_deadline_${operation}`, description,
+    inputSchema: { type: "object", required: ["body"], additionalProperties: false, properties: { body: schema } },
+  })),
   {
     name: "orchestration_context_get_current",
     description:
@@ -410,6 +419,8 @@ export async function handleMcpRequest(
     orchestration_interaction_progress: "interaction.progress",
     orchestration_decision_answer: "interaction.answer",
     orchestration_dispatch_complete: "dispatch.complete",
+    orchestration_dispatch_deadline_set: "dispatch.deadline.set",
+    orchestration_dispatch_deadline_get: "dispatch.deadline.get",
   }[name];
   if (!method) throw new Error(`unsupported orchestration tool: ${name}`);
   const candidates =
