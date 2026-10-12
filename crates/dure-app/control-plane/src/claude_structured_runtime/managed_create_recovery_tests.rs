@@ -469,3 +469,5 @@ async fn retired_direct_stop_crash_resumes_exact_cleanup_without_create_or_retar
         "recovery must only stop the exact retired relay",
     );
 }
+
+mod workspace_move;

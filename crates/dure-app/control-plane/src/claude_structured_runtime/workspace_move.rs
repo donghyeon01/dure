@@ -5,12 +5,27 @@ impl ClaudeRuntimeContext {
         &self,
         workspace: &dure_app::WorkspaceRecordV1,
     ) -> Result<Self, ClaudeStructuredRuntimeErrorV1> {
+        let mut context = self.at_recorded_workspace(workspace)?;
+        let cwd = exact_directory(&context.cwd)?;
+        if cwd != context.cwd {
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        }
+        context.cwd = cwd;
+        Ok(context)
+    }
+
+    // Only persisted placement may use this path. Reading the exact provider
+    // journal still checks its cwd/workspace/generation before any cleanup.
+    pub(super) fn at_recorded_workspace(
+        &self,
+        workspace: &dure_app::WorkspaceRecordV1,
+    ) -> Result<Self, ClaudeStructuredRuntimeErrorV1> {
         workspace
             .validate()
             .map_err(|_| ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
-        let cwd = exact_directory(Path::new(&workspace.root_path))?;
-        if cwd.to_str() != Some(workspace.root_path.as_str()) {
-            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        let cwd = PathBuf::from(&workspace.root_path);
+        if !cwd.is_absolute() {
+            return Err(ClaudeStructuredRuntimeErrorV1::RequestInvalid);
         }
         Ok(Self {
             binding: self.binding.clone(),
@@ -68,7 +83,7 @@ where
             .as_ref()
             .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
         let context = self
-            .runtime_context_at(&binding.interaction_session_id, Some(workspace))
+            .runtime_context_recorded(&binding.interaction_session_id, Some(workspace))
             .await?
             .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
         if context.binding != *binding {

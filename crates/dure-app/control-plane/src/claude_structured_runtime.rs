@@ -426,6 +426,27 @@ where
         interaction_session_id: &AgentInteractionSessionIdV1,
         target_workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<Option<ClaudeRuntimeContext>, ClaudeStructuredRuntimeErrorV1> {
+        let Some(mut context) = self
+            .runtime_context_recorded(interaction_session_id, target_workspace)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let cwd = exact_directory(&context.cwd)?;
+        if target_workspace.is_some() && cwd != context.cwd {
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        }
+        context.cwd = cwd;
+        Ok(Some(context))
+    }
+
+    // Reconstruct existing ownership without interpreting path disappearance
+    // as process exit or changing the cwd saved in the provider journal.
+    async fn runtime_context_recorded(
+        &self,
+        interaction_session_id: &AgentInteractionSessionIdV1,
+        target_workspace: Option<&dure_app::WorkspaceRecordV1>,
+    ) -> Result<Option<ClaudeRuntimeContext>, ClaudeStructuredRuntimeErrorV1> {
         let Some(binding) = self
             .conversation_service
             .binding(interaction_session_id)
@@ -461,9 +482,9 @@ where
         workspace
             .validate()
             .map_err(|_| ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
-        let cwd = exact_directory(Path::new(&workspace.root_path))?;
-        if target_workspace.is_some() && cwd.to_str() != Some(workspace.root_path.as_str()) {
-            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        let cwd = PathBuf::from(&workspace.root_path);
+        if !cwd.is_absolute() {
+            return Err(ClaudeStructuredRuntimeErrorV1::RequestInvalid);
         }
         Ok(Some(ClaudeRuntimeContext {
             binding,
@@ -1485,75 +1506,9 @@ where
         environment: BTreeMap<String, String>,
         workspace: Option<&dure_app::WorkspaceRecordV1>,
     ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredReplacementFailureV1> {
-        let source_binding = structured_transition_source_binding(transition)?;
-        request
-            .execution_profile
-            .validate()
-            .map_err(|_| ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
-        let context = self
-            .runtime_context(&source_binding.interaction_session_id)
-            .await?
-            .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
-        if source_binding.agent_id != request.agent_id
-            || source_binding.provider_id.as_str() != CLAUDE_PROVIDER_ID
-            || source_binding.provider_conversation_ref.as_deref()
-                != transition.intent.provider_conversation_ref.as_option()
-        {
-            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
-        }
-        let target_context = workspace
-            .map(|workspace| context.at_workspace(workspace))
-            .transpose()?
-            .unwrap_or_else(|| context.clone());
-        let failed_context = transition
-            .replacement_workspace
-            .as_ref()
-            .map(|workspace| context.at_workspace(workspace))
-            .transpose()?
-            .unwrap_or_else(|| context.clone());
-        let failed_binding = self.failed_target_binding(transition)?;
-        let binding = if let Some(failed_binding) = failed_binding.as_ref() {
-            self.replace_failed_target(
-                &failed_context,
-                failed_binding,
-                &request,
-                transition_target_effect_operation_id(transition),
-                ClaudeFailedTargetDisposition::Launch,
-                &target_context,
-            )
-            .await?
-        } else {
-            self.replace_stopped_target(
-                &context,
-                source_binding,
-                &request,
-                transition_target_effect_operation_id(transition),
-                &target_context,
-            )
-            .await?
-        };
-        let replacement_source = failed_binding.as_ref().unwrap_or(source_binding);
-        let matches_authorized_target = {
-            let target_revision = replacement_source
-                .binding_revision
-                .checked_add(1)
-                .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeUnavailable)?;
-            let target_runtime = replacement_runtime_for_operation(
-                &replacement_source.interaction_session_id,
-                &replacement_source.runtime,
-                transition_target_effect_operation_id(transition),
-            );
-            is_exact_replacement_target(
-                &binding,
-                replacement_source,
-                &request,
-                &target_runtime,
-                target_revision,
-            )
-        };
-        if !matches_authorized_target {
-            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
-        }
+        let binding = self
+            .prepare_structured_replacement(&request, transition, workspace)
+            .await?;
         let launch = self
             .launch_with_transition_options(
                 ClaudeStructuredLaunchRequestV1 {
@@ -1587,6 +1542,84 @@ where
             binding,
             launch,
         })
+    }
+
+    async fn prepare_structured_replacement(
+        &self,
+        request: &ClaudeStructuredOpenRequestV1,
+        transition: &AgentRuntimeTransitionRecordV1,
+        workspace: Option<&dure_app::WorkspaceRecordV1>,
+    ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
+        let source_binding = structured_transition_source_binding(transition)?;
+        request
+            .execution_profile
+            .validate()
+            .map_err(|_| ClaudeStructuredRuntimeErrorV1::RequestInvalid)?;
+        let context = self
+            .runtime_context(&source_binding.interaction_session_id)
+            .await?
+            .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
+        if source_binding.agent_id != request.agent_id
+            || source_binding.provider_id.as_str() != CLAUDE_PROVIDER_ID
+            || source_binding.provider_conversation_ref.as_deref()
+                != transition.intent.provider_conversation_ref.as_option()
+        {
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        }
+        let target_context = workspace
+            .map(|workspace| context.at_workspace(workspace))
+            .transpose()?
+            .unwrap_or_else(|| context.clone());
+        let failed_context = transition
+            .replacement_workspace
+            .as_ref()
+            .map(|workspace| context.at_recorded_workspace(workspace))
+            .transpose()?
+            .unwrap_or_else(|| context.clone());
+        let failed_binding = self.failed_target_binding(transition)?;
+        let binding = if let Some(failed_binding) = failed_binding.as_ref() {
+            self.replace_failed_target(
+                &failed_context,
+                failed_binding,
+                request,
+                transition_target_effect_operation_id(transition),
+                ClaudeFailedTargetDisposition::Launch,
+                &target_context,
+            )
+            .await?
+        } else {
+            self.replace_stopped_target(
+                &context,
+                source_binding,
+                request,
+                transition_target_effect_operation_id(transition),
+                &target_context,
+            )
+            .await?
+        };
+        let replacement_source = failed_binding.as_ref().unwrap_or(source_binding);
+        let matches_authorized_target = {
+            let target_revision = replacement_source
+                .binding_revision
+                .checked_add(1)
+                .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeUnavailable)?;
+            let target_runtime = replacement_runtime_for_operation(
+                &replacement_source.interaction_session_id,
+                &replacement_source.runtime,
+                transition_target_effect_operation_id(transition),
+            );
+            is_exact_replacement_target(
+                &binding,
+                replacement_source,
+                request,
+                &target_runtime,
+                target_revision,
+            )
+        };
+        if !matches_authorized_target {
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+        }
+        Ok(binding)
     }
 
     pub(crate) async fn stop_replacement_source(
@@ -1644,13 +1677,14 @@ where
         if failed.provider_id.as_str() != CLAUDE_PROVIDER_ID {
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
         }
-        let context = self
-            .runtime_context_at(
-                &failed.interaction_session_id,
-                transition.replacement_workspace.as_ref(),
-            )
-            .await?
-            .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
+        let context = match transition.replacement_workspace.as_ref() {
+            Some(workspace) => {
+                self.runtime_context_recorded(&failed.interaction_session_id, Some(workspace))
+                    .await?
+            }
+            None => self.runtime_context(&failed.interaction_session_id).await?,
+        }
+        .ok_or(ClaudeStructuredRuntimeErrorV1::RuntimeConflict)?;
         let request = ClaudeStructuredOpenRequestV1 {
             agent_id: failed.agent_id.clone(),
             execution_profile: transition.intent.target_execution_profile.clone(),
@@ -2998,7 +3032,7 @@ fn now_ms() -> Result<i64, ClaudeStructuredRuntimeErrorV1> {
 
 async fn stop_exact(
     configuration: &ClaudeStructuredRuntimeConfiguration,
-    cwd: &Path,
+    _recorded_cwd: &Path,
     descriptor: &SessionDescriptor,
     idempotency_prefix: &str,
 ) -> Result<(), ClaudeStructuredRuntimeErrorV1> {
@@ -3022,8 +3056,11 @@ async fn stop_exact(
         )
     })
     .map_err(|_| ClaudeStructuredRuntimeErrorV1::StopFailed)?;
-    let stopper = ManagedSessionStopper::new(&configuration.hmux_runtime, cwd)
-        .with_discovery_root(&configuration.discovery_root);
+    // Stop authority is the complete recorded generation, never the project's
+    // current filesystem path. The broker must survive a removed project cwd.
+    let stopper =
+        ManagedSessionStopper::new(&configuration.hmux_runtime, &configuration.state_root)
+            .with_discovery_root(&configuration.discovery_root);
     let deadline = Instant::now() + EXACT_STOP_RECONCILE_TIMEOUT;
     let receipt = loop {
         let stopper = stopper.clone();
