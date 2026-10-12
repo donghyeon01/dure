@@ -67,6 +67,7 @@ const fixture = {
       waitForSpace: async () => ({}), removeSpace: (id) => useStore.getState().removeSpace(id),
       spaceName: (id) => useStore.getState().spaces.find((space) => space.id === id)?.name,
       openMobile: async () => ({}),
+      openFile: async () => ({}),
     });
     return receipt;
   },

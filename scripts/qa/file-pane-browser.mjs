@@ -1,0 +1,133 @@
+// Run with: node scripts/run-with-build-storage.mjs frontend -- node scripts/qa/file-pane-browser.mjs
+// Source CLI -> isolated HTTP transport -> real frontend dispatcher/opener and
+// renderers. Native file I/O and window routing are fixture boundaries.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
+import { chromium } from "@playwright/test";
+import { createServer } from "vite";
+import { scriptTestEnvironment } from "../lib/script-test-environment.mjs";
+
+const output = resolve("output/playwright/file-pane", `run-${Date.now()}`);
+await mkdir(output, { recursive: true });
+const isolated = await realpath(await mkdtemp(join(tmpdir(), "dure-file-pane-")));
+const executablePath = chromium.executablePath();
+process.env.HOME = join(isolated, "home");
+process.env.DURE_HOME = join(isolated, "home", ".dure");
+process.env.HMUX_DISCOVERY_ROOT = join(isolated, "hmux-discovery");
+await mkdir(process.env.DURE_HOME, { recursive: true });
+await mkdir(process.env.HMUX_DISCOVERY_ROOT, { recursive: true });
+const server = await createServer({ root: process.cwd(), cacheDir: join(output, "node_modules/.vite"),
+  optimizeDeps: { entries: ["scripts/qa/file-pane.fixture.html"] },
+  logLevel: "warn", server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false } });
+const cliPath = resolve("cli/dure.mjs");
+const files = {
+  [join(isolated, "report notes.md")]: "# Review report\n\nRendered **Markdown** from the GUI viewer.\n",
+  [join(isolated, "page.html")]: '<h1>Ordinary HTML source</h1><script>parent.__FILE_SCRIPT_RAN__ = true;</script>',
+  [join(isolated, "design/mockups/review/Report/default.html")]: '<h1>Static HTML preview</h1><button onclick="parent.__FILE_SCRIPT_RAN__ = true">Sandboxed button</button><script>parent.__FILE_SCRIPT_RAN__ = true;</script>',
+};
+let browser;
+let page;
+let client;
+const errors = [];
+const requests = [];
+async function cli(path) {
+  return new Promise((done, reject) => {
+    const child = spawn(process.execPath, [cliPath, "client", "pane", "open", "file", path, "--space-id", "review", "--json"], {
+      cwd: isolated, env: scriptTestEnvironment({ HOME: process.env.HOME, DURE_HOME: process.env.DURE_HOME, HMUX_DISCOVERY_ROOT: process.env.HMUX_DISCOVERY_ROOT }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      try { assert.equal(code, 0, stderr); done(JSON.parse(stdout)); } catch (error) { reject(error); }
+    });
+  });
+}
+try {
+  await server.listen();
+  browser = await chromium.launch({ executablePath });
+  page = await browser.newPage({ viewport: { width: 1440, height: 800 }, colorScheme: "dark" });
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript((documents) => {
+    window.__FILE_READS__ = [];
+    window.__FILE_SCRIPT_RAN__ = false;
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      transformCallback: () => 1, unregisterCallback: () => {},
+      invoke: async (command, args) => {
+        if (command.startsWith("plugin:event|")) return 1;
+        if (command === "find_file_candidates") return [];
+        if (command !== "read_file") throw new Error(`Unexpected native command: ${command}`);
+        window.__FILE_READS__.push(args.path);
+        const content = documents[args.path];
+        if (content === undefined) throw new Error("No such file (fixture)");
+        return { name: args.path.split("/").pop(), path: args.path, kind: args.path.endsWith(".md") ? "markdown" : "text", content, size: content.length, truncated: false };
+      },
+    };
+  }, files);
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/qa/file-pane.fixture.html`);
+  await page.waitForFunction(() => window.__FILE_PANE_FIXTURE__?.ready());
+  await page.screenshot({ path: join(output, "before.png") });
+  client = createHttpServer(async (incoming, response) => {
+    try {
+      assert.equal(incoming.url, "/pane/open");
+      assert.equal(incoming.headers.authorization, "Bearer fixture-only");
+      let text = "";
+      for await (const chunk of incoming) text += chunk;
+      const body = JSON.parse(text);
+      requests.push(body);
+      const receipt = await page.evaluate((params) => window.__FILE_PANE_FIXTURE__.open(params), body);
+      response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(receipt));
+    } catch (error) { response.writeHead(500).end(JSON.stringify({ ok: false, error: { message: String(error) } })); }
+  });
+  await new Promise((done) => client.listen(0, "127.0.0.1", done));
+  await writeFile(join(process.env.DURE_HOME, "server.json"), JSON.stringify({ schemaVersion: 1, apiVersion: 1, port: client.address().port, token: "fixture-only", capabilities: ["file_pane.open_v1"] }));
+  const markdown = await cli("report notes.md");
+  await page.getByRole("heading", { name: "Review report", exact: true }).waitFor();
+  await page.screenshot({ path: join(output, "markdown.png") });
+  await page.getByRole("button", { name: "Edit source", exact: true }).click();
+  const editor = page.locator(".cm-content");
+  await editor.fill("# Unsaved report draft");
+  const repeated = await cli("report notes.md");
+  assert.equal(repeated.pane.panelId, markdown.pane.panelId);
+  assert.equal(repeated.pane.reused, true);
+  assert.equal(await editor.innerText(), "# Unsaved report draft");
+  const html = await cli("page.html");
+  await page.locator(".cm-content").filter({ hasText: "Ordinary HTML source" }).waitFor();
+  assert.equal(html.pane.component, "fileviewer");
+  assert.equal(await page.locator("iframe").count(), 0);
+  await page.screenshot({ path: join(output, "html-source.png") });
+  const mockup = await cli("design/mockups/review/Report/default.html");
+  const frame = page.frameLocator("iframe");
+  await frame.getByRole("heading", { name: "Static HTML preview" }).waitFor();
+  assert.equal(mockup.pane.component, "mockup");
+  assert.equal(await page.locator("iframe").getAttribute("sandbox"), "allow-same-origin");
+  await frame.getByRole("button", { name: "Sandboxed button" }).click();
+  assert.equal(await page.evaluate(() => window.__FILE_SCRIPT_RAN__), false);
+  await page.screenshot({ path: join(output, "html-sandbox.png") });
+  const missing = await cli("missing.md");
+  assert.equal(missing.pane.mounted, true);
+  await page.getByText("Error: No such file (fixture)", { exact: true }).waitFor();
+  const snapshot = await page.evaluate(() => window.__FILE_PANE_FIXTURE__.snapshot());
+  assert.equal(snapshot.panes.length, 4);
+  assert.deepEqual(errors, []);
+  await writeFile(join(output, "evidence.json"), JSON.stringify({ source: "headless Chromium + source CLI + real frontend, fixture native I/O and window routing", markdown, repeated, html, mockup, missing, snapshot, requests, errors }, null, 2));
+  console.log(`PASS local file CLI, Markdown, preserved draft, HTML source, static sandbox and read error: ${output}`);
+} catch (error) {
+  await page?.screenshot({ path: join(output, "failure.png") });
+  await writeFile(join(output, "failure.json"), JSON.stringify({ error: String(error), errors, requests, reads: await page?.evaluate(() => window.__FILE_READS__) }, null, 2));
+  console.error(`File pane browser fixture failed: ${output}`, errors);
+  throw error;
+} finally {
+  if (client) await new Promise((done) => client.close(done));
+  await browser?.close();
+  await server.close();
+  await rm(isolated, { recursive: true, force: true });
+}

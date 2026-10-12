@@ -19,6 +19,11 @@ function dependencies(
 			moved: true,
 		})),
 		openMobile: vi.fn(async () => ({ panelId: "mobile-pane", reused: true })),
+		openFile: vi.fn(async (_spaceId, path) => ({
+			panelId: "file-pane",
+			file: { source: "local", path },
+			mounted: true,
+		})),
 		addSpace: vi.fn(() => "desktop-new"),
 		waitForSpace: vi.fn(async () => ({})),
 		removeSpace: vi.fn(),
@@ -28,6 +33,102 @@ function dependencies(
 }
 
 describe("dispatchCliDesktopPaneRequest", () => {
+	it("routes local file opening before claiming and calls only the file owner", async () => {
+		const request = {
+			reqId: "file",
+			action: "pane.open",
+			params: { tool: "file", path: "/reports/a b.md", spaceId: "review" },
+		};
+		const forwarded = dependencies({
+			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+		});
+		await dispatchCliDesktopPaneRequest(request, forwarded);
+		expect(forwarded.claim).not.toHaveBeenCalled();
+		expect(forwarded.openFile).not.toHaveBeenCalled();
+		const owner = dependencies();
+		await dispatchCliDesktopPaneRequest(request, owner);
+		expect(owner.openFile).toHaveBeenCalledWith("review", "/reports/a b.md");
+		expect(owner.openMobile).not.toHaveBeenCalled();
+		expect(owner.complete).toHaveBeenCalledWith(
+			"file",
+			expect.objectContaining({
+				ok: true,
+				pane: expect.objectContaining({
+					spaceId: "review",
+					panelId: "file-pane",
+					mounted: true,
+				}),
+			}),
+			"pane.open",
+		);
+	});
+
+	it.each([
+		{ path: "relative.md" },
+		{ path: "file:///reports/a.html" },
+		{ path: "https://example.com/a.md" },
+		{ source: "ssh" },
+		{ hostId: "remote" },
+		{ sessionId: "remote-session" },
+		{ path: "" },
+	])(
+		"refuses non-local file coordinates before routing: %j",
+		async (invalid) => {
+			const deps = dependencies();
+			await dispatchCliDesktopPaneRequest(
+				{
+					reqId: "invalid-file",
+					action: "pane.open",
+					params: {
+						tool: "file",
+						spaceId: "review",
+						path: "/reports/a.md",
+						...invalid,
+					},
+				},
+				deps,
+			);
+			expect(deps.routeToSpaceOwner).not.toHaveBeenCalled();
+			expect(deps.openFile).not.toHaveBeenCalled();
+			expect(deps.complete).toHaveBeenCalledWith(
+				"invalid-file",
+				expect.objectContaining({
+					ok: false,
+					error: expect.objectContaining({ code: "invalid_request" }),
+				}),
+				"pane.open",
+			);
+		},
+	);
+
+	it("does not open an unclaimed file and returns the opener's failure", async () => {
+		const request = {
+			reqId: "file",
+			action: "pane.open",
+			params: { tool: "file", path: "/reports/a.md", spaceId: "review" },
+		};
+		const unclaimed = dependencies({ claim: vi.fn(async () => false) });
+		await dispatchCliDesktopPaneRequest(request, unclaimed);
+		expect(unclaimed.openFile).not.toHaveBeenCalled();
+		expect(unclaimed.complete).not.toHaveBeenCalled();
+		const failed = dependencies({
+			openFile: vi.fn(async () => {
+				throw Object.assign(new Error("Space absent"), {
+					code: "space_not_found",
+				});
+			}),
+		});
+		await dispatchCliDesktopPaneRequest(request, failed);
+		expect(failed.complete).toHaveBeenCalledWith(
+			"file",
+			{
+				ok: false,
+				error: { code: "space_not_found", message: "Space absent" },
+			},
+			"pane.open",
+		);
+	});
+
 	it("preserves the selected Space for explicit background creation", async () => {
 		let selected = "working";
 		const deps = dependencies({

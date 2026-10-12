@@ -3,6 +3,7 @@ import {
 	resolveCliSpaceId,
 } from "@/lib/cli/cliSpaceIdentity";
 import type { CliSpaceOwnerRoute } from "@/lib/cli/cliSpaceOwnerRouting";
+import { localFilePanePath } from "../../../cli/lib/contracts/local-file-pane.mjs";
 
 export interface CliDesktopPaneRequest {
 	reqId: string;
@@ -31,6 +32,7 @@ export interface CliDesktopPaneDependencies {
 	removeSpace(spaceId: string): void;
 	spaceName(spaceId: string): string | undefined;
 	openMobile(spaceId: string): Promise<object>;
+	openFile(spaceId: string, path: string): Promise<object>;
 }
 
 function errorPayload(error: unknown, fallbackCode: string) {
@@ -193,15 +195,41 @@ async function handlePaneOpen(
 	let claimed = false;
 	try {
 		const spaceId = resolveCliSpaceId(request.params, { required: true });
-		if (!spaceId || request.params.tool !== "mobile")
-			throw new Error("pane open requires tool mobile and an exact Space");
+		const { tool } = request.params;
+		if (!spaceId || (tool !== "mobile" && tool !== "file"))
+			throw new Error(
+				"pane open requires tool mobile or file and an exact Space",
+			);
+		let path: string | undefined;
+		if (tool === "file") {
+			if (
+				(request.params.source !== undefined &&
+					request.params.source !== "local") ||
+				(request.params.hostId !== undefined &&
+					request.params.hostId !== "local") ||
+				request.params.sessionId !== undefined
+			) {
+				throw Object.assign(
+					new Error(
+						"file panes require a local path on the connected app host",
+					),
+					{ code: "invalid_request" },
+				);
+			}
+			path = localFilePanePath(request.params.path, { absolute: true });
+		}
 		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
 			return null;
 		claimed = await dependencies.claim(request.reqId);
 		if (!claimed) return null;
 		return {
 			ok: true,
-			pane: { spaceId, ...(await dependencies.openMobile(spaceId)) },
+			pane: {
+				spaceId,
+				...(path === undefined
+					? await dependencies.openMobile(spaceId)
+					: await dependencies.openFile(spaceId, path)),
+			},
 		};
 	} catch (error) {
 		if (!claimed && !(await dependencies.claim(request.reqId))) return null;

@@ -81,8 +81,10 @@ import { dispatchCliExternalWorkspaceRequest } from "@/lib/cli/cliExternalWorksp
 import { openExternalWorkspaceForPane } from "@/lib/workspace/externalWorkspace";
 import { dispatchCliWorktreePresentation } from "@/lib/cli/cliWorktreePresentation";
 import { dispatchCliUnopenedAgentVisibility } from "@/lib/cli/cliUnopenedAgentVisibility";
+import { openLocalFilePane } from "@/lib/files/localFilePane";
 
 const cliDesktopPaneDependencies = {
+  openFile: openLocalFilePane,
   openMobile: async (spaceId: string) => {
     const state = useStore.getState();
     if (!state.spaces.some((space) => space.id === spaceId))

@@ -3534,6 +3534,8 @@ Usage:
                                       Select the exact Space in its owning window
   dure client pane <open|create|split|close|move|state|act> ...
                                       Manage panes in the connected Dure client
+  dure client pane open file PATH (--space ID_OR_NAME | --space-id ID) [--json]
+                                      Open a local document with the GUI file viewer
   dure client project add [PATH] [--space ID_OR_NAME | --space-id ID] [--host ID]
                                       Add a shared app working location; no pane or worktree creation
   dure client host add <SSH_CONFIG_ALIAS> [--name NAME] [--json]

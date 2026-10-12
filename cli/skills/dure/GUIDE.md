@@ -387,6 +387,30 @@ dure client host add ec2-106 --json
 dure client host add --hostname example.com --user ec2-user --identity-file ~/.ssh/key.pem --json
 ```
 
+Open a local report or document with the same file viewer as the GUI:
+
+```sh
+dure client pane open file ./report.md --space-id SPACE --json
+dure client pane open file "/path/to/report.html" --space Review --json
+```
+
+Use `client observe` to discover the exact Space ID or a unique name. Opening
+selects that Space in its owning window without OS foreground focus. Relative
+paths resolve against the CLI's working directory; run this on the connected
+app host. This operation does not use `DURE_BACKEND_PROFILE`, copy remote files,
+or accept `--host`, `--backend` or URLs (including `file://`). An SSH file remains
+an SSH file in the GUI; an identical local path does not reuse its pane.
+
+Markdown uses the rendered viewer. Ordinary HTML opens as source, while
+`design/mockups/<cluster>/<Name>/<state>.html` uses the existing static preview
+whose sandbox blocks scripts. Browser's URL restrictions still apply.
+The GUI opener reuses or restores the document pane and preserves its draft.
+The receipt's `pane.panelId`, `pane.spaceId`, `pane.file` and `mounted: true`
+confirm placement, not successful file loading. Missing/unreadable files show
+the same error or candidate picker as a GUI open. After an uncertain response,
+inspect `client observe`; reopening the same path in the same Space reuses it.
+An older app without `file_pane.open_v1` is refused before mutation.
+
 Mobile simulator workflows use the same pane UI and native device owner:
 
 ```sh

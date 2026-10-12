@@ -57,10 +57,9 @@ function runCli(args, environment) {
 function isolatedHome() {
   const home = mkdtempSync(join(tmpdir(), "dure-client-pane-"));
   temporaryRoots.push(home);
-  const environment = { ...process.env, HOME: home };
+  const environment = { ...process.env, HOME: home, DURE_HOME: join(home, ".dure"), HMUX_DISCOVERY_ROOT: join(home, "hmux-discovery") };
   delete environment.DURE_APP_CHANNEL;
   delete environment.HEBBIAN_APP_CHANNEL;
-  delete environment.DURE_HOME;
   delete environment.DURE_BACKEND_PROFILE;
   delete environment.HMUX_SESSION_ID;
   delete environment.HMUX_WORKSPACE_ID;
@@ -1126,6 +1125,77 @@ describe("mobile pane opening through the shared client transport", () => {
   expect(result.code).toBe(2); expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
   expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([]);
  });
+});
+
+describe("local file pane opening", () => {
+  const receipt = (body, patch = {}) => ({ ok: true, pane: {
+    panelId: "file-pane", spaceId: body.spaceId, component: "fileviewer",
+    mounted: true, reused: false, file: { source: "local", path: body.path }, ...patch,
+  } });
+
+  it("resolves a spaced relative path and a named Space through the CLI", async () => {
+    const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body) }), ["file_pane.open_v1"]);
+    terminalSpaces(fixture);
+    const result = await runCli(["client", "pane", "open", "file", "reports/a b.md", "--space", "Selected", "--json"], { ...fixture.environment, DURE_BACKEND_PROFILE: "remote-ignored" });
+    expect(result.code, result.stderr).toBe(0);
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0]).toMatchObject({ url: "/pane/open", body: { tool: "file", path: resolve("reports/a b.md"), spaceId: "space-1" } });
+    expect(JSON.parse(result.stdout)).toMatchObject({ kind: "dure.client_pane.open", pane: { panelId: "file-pane", spaceId: "space-1", file: { path: resolve("reports/a b.md"), source: "local" }, mounted: true } });
+  });
+
+  it("opens an HTML path in an exact Space without a projection and reports opened in human output", async () => {
+    const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body, { reused: true }) }), ["file_pane.open_v1"]);
+    const result = await runCli(["client", "pane", "open", "file", resolve("page.html"), "--space-id", "exact"], fixture.environment);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("client pane opened");
+    expect(result.stdout).toContain("exact/file-pane");
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  it.each([
+    ["file"], ["file", "report.md"],
+    ["file", "file:///tmp/report.html", "--space-id", "exact"],
+    ["file", "https://example.com/a.md", "--space-id", "exact"],
+    ["file", "report.md", "--space-id", "exact", "--host", "ssh"],
+    ["file", "report.md", "--space-id", "exact", "--backend", "remote"],
+    ["file", "report.md", "--space-id", "exact", "--space", "Name"],
+    ["file", "report.md", "extra.html", "--space-id", "exact"],
+    ["mobile", "report.md", "--space-id", "exact"],
+  ])("refuses invalid local file grammar before any app request: %j", async (...tail) => {
+    const fixture = await fixtureClient(undefined, ["file_pane.open_v1"]);
+    const result = await runCli(["client", "pane", "open", ...tail, "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("invalid_request");
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it("requires the file capability before mutation, even when mobile opening is supported", async () => {
+    const fixture = await fixtureClient(undefined, ["mobile_pane.open_v1"]);
+    const result = await runCli(["client", "pane", "open", "file", "report.md", "--space-id", "exact", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it.each([
+    { spaceId: "wrong-space" }, { component: "browser" }, { mounted: false },
+    { file: { path: "/remote/report.md", source: "ssh", hostId: "remote" } },
+  ])("rejects an unconfirmed file receipt without retrying: %j", async (patch) => {
+    const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body, patch) }), ["file_pane.open_v1"]);
+    const result = await runCli(["client", "pane", "open", "file", "report.md", "--space-id", "exact", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("client_response_invalid");
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  it("discovers file opening in offline help and the shipped guide", async () => {
+    const { environment } = isolatedHome();
+    for (const args of [["--help"], ["client", "pane", "open", "--help"], ["skills", "get", "dure"]]) {
+      const result = await runCli(args, environment);
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).toContain("dure client pane open file");
+    }
+  });
 });
 
 it("refuses background creation on older apps before mutation and keeps explicit selection compatible", async () => {

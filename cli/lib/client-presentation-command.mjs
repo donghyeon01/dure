@@ -8,6 +8,7 @@ import { observeApp } from "./app-observation.mjs";
 import { join, resolve } from "node:path";
 import { loadSessionClientProjection } from "./client-registry.mjs";
 import { resolveClientSpaceTarget } from "./space-selection.mjs";
+import { localFilePanePath } from "./contracts/local-file-pane.mjs";
 
 const PANE_API_VERSION = "dure.client-pane/v1";
 const PRESENTATION_API_VERSION = "dure.client-presentation/v1";
@@ -30,6 +31,7 @@ Usage:
   dure client host add --hostname HOST --user USER [--port PORT]
                        [--identity-file PATH] [--name NAME] [--json]
   dure client pane open mobile (--space ID_OR_NAME | --space-id ID) [--json]
+  dure client pane open file PATH (--space ID_OR_NAME | --space-id ID) [--json]
   dure client pane create [--space ID_OR_NAME | --space-id ID]
                           [--cwd PATH] [--host local|SSH_HOST_ID] [--json]
   dure client pane split <reference-session-id> [--reference-panel-id ID]
@@ -61,6 +63,11 @@ An alias imports ~/.ssh/config. Explicit destinations use a key file or normal S
 Registration creates no session. The first terminal open installs Hmux if it is missing.
 Open mobile reuses the mobile simulator pane in the explicitly selected Space.
 Use its returned panelId with pane state to discover device, profile, preview and report actions.
+Open file selects the Space and uses the GUI file opener, reusing an existing document pane.
+PATH is local to the CLI and connected app host; relative paths resolve from CLI cwd.
+URLs, --host and --backend are not supported; no SSH file is copied or opened as local.
+Markdown renders in the viewer; ordinary HTML opens as source. Design mockup HTML keeps its script-blocking sandbox.
+The receipt confirms pane placement, not file loading; missing/unreadable files show the GUI's read error.
 Pane create uses the invoking pane's Space when known, otherwise the app's active Space.
 Local cwd defaults to the CLI working directory; SSH cwd defaults to the remote home.
 No Git worktree is created. --host selects a registered app SSH host, not a backend profile.
@@ -251,15 +258,17 @@ function locationSelection(options) {
 }
 
 function parsePaneOpenCommand(tail) {
-  const { options, target } = readCommandTail(tail, {
+  const { options, target, targets } = readCommandTail(tail, {
     values: new Map([["--space", "space"], ["--space-id", "spaceId"]]),
-    flags: new Map([["--json", "json"]]), optionLabel: "client pane open",
+    flags: new Map([["--json", "json"]]), optionLabel: "client pane open", maxTargets: 2,
   });
-  if (target !== "mobile") throw invalidRequest("Supported tool: mobile.");
+  if (target !== "mobile" && target !== "file") throw invalidRequest("Supported tools: mobile, file PATH.");
+  if (target === "mobile" && targets.length !== 1) throw invalidRequest("open mobile takes no PATH.");
+  const path = target === "file" ? localFilePanePath(targets[1]) : undefined;
   if (options.space === undefined && options.spaceId === undefined) throw invalidRequest("pane open requires --space or --space-id.");
   const selection = locationSelection(options);
   return { domain: "pane", action: "open", path: "/pane/open", ...selection,
-    body: { tool: "mobile", ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}) } };
+    body: { tool: target, ...(path === undefined ? {} : { path }), ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}) } };
 }
 
 function parsePaneCreateCommand(tail) {
@@ -557,7 +566,7 @@ export async function runClientPresentationCommand(
     throw new AppControlClientError("client_capability_missing", "Update the running Dure app; unopened_agents.visibility_v1 is required.");
   }
   if ((command.domain === "pane" && (command.action === "create" || command.action === "open")) || command.domain === "project") {
-    const capability = command.domain === "project" ? "project_registration.add_v1" : command.action === "open" ? "mobile_pane.open_v1" : "terminal_pane.create_v1";
+    const capability = command.domain === "project" ? "project_registration.add_v1" : command.action === "open" ? (command.body.tool === "file" ? "file_pane.open_v1" : "mobile_pane.open_v1") : "terminal_pane.create_v1";
     if (descriptor && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes(capability))) {
       throw new AppControlClientError("client_capability_missing", `Update the running Dure app; ${capability} is required.`);
     }
@@ -571,6 +580,9 @@ export async function runClientPresentationCommand(
     if (command.body.hostId === "local") {
       const field = command.domain === "project" ? "path" : "cwd";
       command.body[field] = resolve(command.body[field] ?? process.cwd());
+    }
+    if (command.body.tool === "file") {
+      command.body.path = localFilePanePath(resolve(command.body.path), { absolute: true });
     }
   }
   if (descriptor && command.action === "act" && (command.body.arguments !== undefined || command.body.idempotencyKey !== undefined)
@@ -589,6 +601,13 @@ export async function runClientPresentationCommand(
       "client_response_invalid",
       "Dure client presentation receipt is invalid.",
     );
+  }
+  if (command.body.tool === "file" && (!humanReceiptIdentity(member.panelId)
+    || member.spaceId !== command.body.spaceId || member.mounted !== true
+    || !["fileviewer", "mockup"].includes(member.component) || typeof member.reused !== "boolean"
+    || member.file?.source !== "local" || member.file?.path !== command.body.path
+    || member.file?.hostId !== undefined || member.file?.sessionId !== undefined)) {
+    throw new AppControlClientError("client_response_invalid", "File pane placement was not confirmed; inspect client observe before retrying.");
   }
   if (command.domain === "pane" && command.action === "move"
     && (member.panelId !== command.body.targetPanelId || member.fromSpaceId !== command.body.fromSpaceId
@@ -755,7 +774,7 @@ export function formatClientPresentationReceipt(report) {
   );
   const panelId = humanReceiptIdentity(report.pane.panelId);
   const target = [spaceId, panelId].filter(Boolean).join("/");
-  const detail = report.action === "create" ? "created" : report.action === "split" ? "split" : report.action === "move" ? (report.pane.moved ? "moved" : "already at destination") : "closed";
+  const detail = report.action === "open" ? "opened" : report.action === "create" ? "created" : report.action === "split" ? "split" : report.action === "move" ? (report.pane.moved ? "moved" : "already at destination") : "closed";
   return `✓ client pane ${detail}${target ? ` → ${target}` : ""}`;
 }
 
