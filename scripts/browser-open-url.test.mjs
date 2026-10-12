@@ -27,7 +27,7 @@ function fixture(fault) {
     events.push({ backend: body });
     let result;
     if (body.kind === "list") result = { workspace_id: resource.workspace_id, resources: [{ resource }] };
-    else if (body.kind === "observe") result = { control: fault === "generation" && events.some((e) => e.app?.kind === "prepare") ? { ...control, resource: { ...resource, generation: "changed" } } : control, pages: [{ page, url: "about:blank", title: "Source", profile_id: "default" }] };
+    else if (body.kind === "observe") result = { control: fault === "closed" ? { ...control, phase: "closed", controller: null, current_page: null } : fault === "generation" && events.some((e) => e.app?.kind === "prepare") ? { ...control, resource: { ...resource, generation: "changed" } } : control, pages: [{ page, url: "about:blank", title: "Source", profile_id: "default" }] };
     else if (["action", "profile_new_page"].includes(body.kind)) {
       if (fault === "action") throw Object.assign(new Error("browser_controller_changed"), { code: "browser_controller_changed" });
       result = { control, response: { success: true, data: { page: fault === "page" ? { ...created, resource: { ...resource, generation: "changed" } } : created } } };
@@ -55,6 +55,15 @@ test("a rejected preflight performs no control or tab mutation", async () => {
   const f = fixture("prepare"); const result = await f.run();
   assert.equal(result.ok, false); assert.equal(result.error.code, "browser_presentation_window_changed");
   assert.deepEqual(f.events.map((e) => e.app?.kind ?? e.backend.kind), ["observe", "prepare"]);
+});
+
+test("open-url reports a closed Browser before preparing the Space or creating a tab", async () => {
+  const f = fixture("closed");
+  const result = await f.run();
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "browser_resource_closed");
+  assert.match(result.error.hint, /dure browser create/);
+  assert.deepEqual(f.events.map((event) => event.app?.kind ?? event.backend.kind), ["observe"]);
 });
 
 test("presentation failure retains the successful page and operation without another mutation", async () => {

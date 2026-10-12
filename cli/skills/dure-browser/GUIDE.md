@@ -136,7 +136,9 @@ issuing input if the user takes control during your work.
 
 If creation reports `browser_profile_exit_unconfirmed`, inspect and recover the
 same profile on its owning backend. Creation uses `default` unless `--profile`
-selects another profile:
+selects another profile. The CLI includes `error.profileRecovery` when it can
+read that profile's recovery status; `restart_required` means this profile needs
+a restart of the computer hosting the backend, not just Dure:
 
 ```sh
 dure browser tab profile status --profile default
@@ -150,6 +152,21 @@ guidance, keep all profile and lock files intact, and use a new key after a
 terminal refusal and a changed condition. Reuse the same key after an uncertain
 transport result. After successful recovery, retry creation with a new operation
 key. The Browser pane and Profiles dialog use the same recovery service.
+
+To continue without restarting or changing the blocked profile, explicitly
+create a separate isolated profile and use its returned ID:
+
+```sh
+dure browser tab profile create --label temporary --scope isolated
+dure browser create --profile NEW_PROFILE_ID
+```
+
+Use the same backend for both commands. The new profile has separate sign-ins,
+cookies and local storage; it does not recover or copy the blocked profile.
+
+If a command reports `browser_resource_closed`, that Browser has been closed.
+Create a new Browser and use its returned resource ID. A new controller or epoch
+cannot reopen a closed resource.
 
 ## Recover an uncertain command
 

@@ -19,11 +19,11 @@ import { browserData } from "./browser-data.mjs";
 import { browserClipboard } from "./browser-clipboard.mjs";
 import { browserEnvironment } from "./browser-environment.mjs";
 import { browserMouse } from "./browser-mouse.mjs";
-import { profileRecoveryFailure } from "./browser-profile-recovery.mjs";
+import { explainProfileRecoveryFailure } from "./browser-profile-recovery.mjs";
 import { browserProfiles } from "./browser-profiles.mjs";
 import { browserTabRows, allBrowserTabs, browserTabsWithProfiles, browserTabLabel, browserTabWithLabel } from "./browser-tabs.mjs";
 import { browserConsole, performBrowserConsole } from "./browser-console.mjs";
-import { browserActionAuthority, browserCurrentPage, sameBrowserPage } from "./browser-action-authority.mjs";
+import { assertBrowserResourceOpen, browserActionAuthority, browserCurrentPage, sameBrowserPage } from "./browser-action-authority.mjs";
 import { browserDiff } from "./browser-diff.mjs";
 import { browserDialog, performBrowserDialog } from "./browser-dialog.mjs";
 import { randomUUID } from "node:crypto";
@@ -527,6 +527,8 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
   let operationId;
   let backend;
   let sessionController;
+  let recoveryProfile;
+  let readRecoveryStatus;
   try {
     const options = parseBrowserArguments(args);
     normalizeBrowserExec(options);
@@ -718,8 +720,8 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     if (!backend?.profile || backend.error) return { ok: false, operation_id: operationId, error: backendRequestFailure(backend?.error, backend?.profile) };
     const aggregateDeadline = resourceSelection.all ? Date.now() + deadlineMs : undefined;
     let selectedResource;
-    const request = async (body) => {
-      const remainingMs = aggregateDeadline === undefined ? deadlineMs : aggregateDeadline - Date.now();
+    const request = async (body, maximumWaitMs = deadlineMs) => {
+      const remainingMs = Math.min(maximumWaitMs, aggregateDeadline === undefined ? deadlineMs : aggregateDeadline - Date.now());
       if (remainingMs <= 0) throw new Error("browser_tab_list_timeout");
       const response = await requestBackend(
         { ...backend.profile, deadlineMs: remainingMs },
@@ -729,6 +731,10 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
       assertBrowserResource(selectedResource, body.kind, response.result);
       return response.result;
     };
+    if (command === "create") {
+      recoveryProfile = options.profileId ?? "default";
+      readRecoveryStatus = (body) => request(body, 2500);
+    }
     if (resourceSelection.scoped) {
       const catalog = await request({ kind: "list" });
       selectedResource = browserCatalogResource(catalog?.result);
@@ -814,6 +820,7 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
         }
       }
       else {
+        assertBrowserResourceOpen(view.control);
         if (!implicitController) action = inputAction();
         const referenced = captureTarget?.reference?.snapshot.page ?? query?.target?.reference?.snapshot.page ?? action?.source?.reference?.snapshot.page ?? action?.target?.reference?.snapshot.page;
         if (referenced && (referenced.resource.resource_id !== resourceId || (options.page !== undefined && referenced.page_id !== options.page))) throw new Error("browser_reference_page_mismatch");
@@ -866,15 +873,15 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
         }
       }
     }
-    return { ok: !result?.error && result?.result?.response?.success !== false && (!result?.replayed || result.receipt?.state === "succeeded"), operation_id: operationId, ...result, ...(result?.error ? { error: profileRecoveryFailure(result.error) } : {}), ...(sessionController ? { session_controller: sessionController } : {}) };
+    return { ok: !result?.error && result?.result?.response?.success !== false && (!result?.replayed || result.receipt?.state === "succeeded"), operation_id: operationId, ...result, ...(result?.error ? { error: await explainProfileRecoveryFailure(result.error, recoveryProfile, readRecoveryStatus) } : {}), ...(sessionController ? { session_controller: sessionController } : {}) };
   } catch (error) {
     return {
       ok: false, operation_id: operationId,
       ...(sessionController ? { session_controller: sessionController } : {}),
-      error: profileRecoveryFailure(error instanceof BrowserCommandError ? error.diagnostic
+      error: await explainProfileRecoveryFailure(error instanceof BrowserCommandError ? error.diagnostic
         : error?.name === "Error" && error.message.startsWith("browser_")
         ? { code: error.message }
-        : backendRequestFailure(error, backend?.profile)),
+        : backendRequestFailure(error, backend?.profile), recoveryProfile, readRecoveryStatus),
     };
   }
 }

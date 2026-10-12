@@ -1,9 +1,21 @@
+import { BrowserCommandError } from "./browser-command-error.mjs";
+
+/** Closing a Browser retires its lease and pages; those absences are not a handoff. */
+export function assertBrowserResourceOpen(control) {
+  if (control?.phase === "closed") throw new BrowserCommandError(
+    "browser_resource_closed",
+    "This Browser is closed.",
+    "Run dure browser create on the same backend, then use the new Browser resource ID.",
+  );
+}
+
 export function browserActionAuthority(control, page, options, operationId) {
   const { lease, operation_id, command_sequence } = browserControllerAuthority(control, options, operationId);
   return { lease, page, operation_id, command_sequence };
 }
 
 export function browserControllerAuthority(control, options, operationId) {
+  assertBrowserResourceOpen(control);
   const lease = control.controller;
   if (!lease || lease.controller_id !== options.controller || lease.epoch !== options.epoch) throw new Error("browser_controller_changed");
   return { lease, operation_id: operationId, command_sequence: control.next_command_sequence };
@@ -15,6 +27,7 @@ export function sameBrowserPage(left, right) {
 }
 
 export function browserCurrentPage(control) {
+  assertBrowserResourceOpen(control);
   const page = control?.current_page;
   if (page === undefined || page === null) throw new Error("browser_page_required");
   if (typeof page.page_id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/.test(page.page_id)

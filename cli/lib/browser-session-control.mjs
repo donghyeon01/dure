@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { collectSessionQuery } from "./session-query.mjs";
 import { boundedString, GENERATION_FIELDS, sameGeneration } from "./session-runtime-projection.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import { assertBrowserResourceOpen } from "./browser-action-authority.mjs";
 
 const fields = [
   ["sessionId", "HMUX_SESSION_ID"], ["workspaceId", "HMUX_WORKSPACE_ID"],
@@ -49,6 +50,7 @@ function validControl(control, resourceId) {
  * lease, retry a handoff, or keep authority across CLI invocations. */
 export async function prepareBrowserSessionControl(request, resourceId, source, operationId, { snapshot = false } = {}) {
   const control = validControl((await request({ kind: "control_state", resource_id: resourceId }))?.result, resourceId);
+  assertBrowserResourceOpen(control);
   if (snapshot && control.controller?.controller_id !== source.controller_id && control.controller !== null) {
     return { resource: control.resource };
   }
@@ -64,6 +66,7 @@ export async function prepareBrowserSessionControl(request, resourceId, source, 
   const result = await request({ kind: "control", resource: control.resource, controller_id: source.controller_id,
     expected: null, operation_id: source.control_operation_id });
   const granted = validControl(result?.result, resourceId);
+  assertBrowserResourceOpen(granted);
   if ((result.replayed && result.receipt?.state !== "succeeded") || !sameResource(granted.resource, control.resource)
       || granted.phase !== "ready" || granted.requested_controller != null
       || granted.controller?.controller_id !== source.controller_id) throw new Error("browser_controller_changed");

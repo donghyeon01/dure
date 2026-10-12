@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolveBrowserPresentation } from "./browser-presentation.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
-import { browserCurrentPage } from "./browser-action-authority.mjs";
+import { assertBrowserResourceOpen, browserCurrentPage } from "./browser-action-authority.mjs";
+import { BrowserCommandError } from "./browser-command-error.mjs";
 import { assertBrowserResource } from "./browser-resource-target.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 
@@ -43,6 +44,7 @@ export async function collectBrowserOpenUrl({ options, resolveBackend, requestBa
     const context = { resolveBackend: async () => backend, requestBackend, cwd, sourceEnvironment };
     const observed = await run({ ...context, args: show });
     if (!observed.ok) return { ...observed, operation_id: operationId };
+    assertBrowserResourceOpen(observed.result?.control);
     const resource = observed.result?.control?.resource;
     const present = (kind, pageId) => presentationClient.request(profile, resource, kind, pageId);
     await present("prepare");
@@ -62,7 +64,7 @@ export async function collectBrowserOpenUrl({ options, resolveBackend, requestBa
     const presentation = await present("present", page.page_id);
     return { ...runtime, presentation: { ...presentation, client: presentationClient.client } };
   } catch (error) {
-    const failure = error?.code ? { code: error.code, message: error.message } :
+    const failure = error instanceof BrowserCommandError ? error.diagnostic : error?.code ? { code: error.code, message: error.message } :
       error?.message?.startsWith("browser_") ? { code: error.message } : backendRequestFailure(error, backend?.profile);
     return { ok: false, operation_id: operationId, error: failure,
       ...(runtime ? { runtime, presentation: { ...presentationClient.target, state: "failed", client: presentationClient.client, error: failure } } : {}) };

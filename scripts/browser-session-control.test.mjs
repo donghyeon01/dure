@@ -105,6 +105,25 @@ test("successive commands reuse observed self authority and snapshots claim befo
   assert.equal(c.calls.at(-1).body.action.target.reference.snapshot.revision, "2");
 });
 
+test.each([null, selfLease, humanLease])("closed resources keep their lifecycle error instead of a controller error: %j", async (lease) => {
+  for (const args of [["snapshot", resource.resource_id], inputs[0]]) {
+    const c = client({ lease });
+    c.control.phase = "closed";
+    c.control.current_page = null;
+    const result = await c.run(args);
+    assert.equal(result.error.code, "browser_resource_closed");
+    assert.match(result.error.hint, /dure browser create/);
+    assert.equal(c.calls.some(({ body }) => body.kind === "control" || body.authority || body.kind === "snapshot"), false);
+  }
+});
+
+test("a Browser closed after session control observation rejects input with the lifecycle error", async () => {
+  const c = client({ lease: selfLease, race: (control) => { control.phase = "closed"; control.controller = null; control.current_page = null; } });
+  const result = await c.run(inputs[0]);
+  assert.equal(result.error.code, "browser_resource_closed");
+  assert.equal(c.calls.some(({ body }) => body.authority), false);
+});
+
 test.each(inputs.map((args) => [args]))("a human lease is never implicitly taken by %j", async (args) => {
   const c = client({ lease: humanLease });
   const result = await c.run(args);
