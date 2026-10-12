@@ -195,6 +195,7 @@ process.stdout.write(JSON.stringify({
     ).toBe(0);
     expect(admit).toHaveBeenCalledWith({
       cwd: "/fixture",
+      environment: { PATH: "/bin" },
       label: "frontend build",
       buildClass: "frontend",
       requestedBytes: buildStorageBudget("frontend"),
@@ -218,6 +219,7 @@ process.stdout.write(JSON.stringify({
     ).toBe(0);
     expect(admit).toHaveBeenCalledWith({
       cwd: process.cwd(),
+      environment: { RUNNER_ENVIRONMENT: "github-hosted" },
       floorBytes: 0,
       goalBytes: 0,
       label: "full build",

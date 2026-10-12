@@ -38,6 +38,7 @@ export function runWithBuildStorage(
       : {};
   const headroom = admit({
     cwd,
+    environment,
     ...disposableRunnerPolicy,
     label: `${command.kind} build`,
     buildClass: command.kind,

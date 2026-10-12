@@ -137,6 +137,13 @@ owner releases them or exits; an unknown process observation is not proof of
 exit. Coordinate with the listed build owner and retry after capacity or
 reservations change, rather than repeatedly rerunning the refused command.
 
+To preserve generated caches, set `DURE_BUILD_PRESERVE_CACHES=1` in the build's
+environment. The shared admission check then refuses insufficient capacity
+before automatic reclamation, while retaining the same floor, build budget and
+peer reservations. The setting is inherited by child build commands. For example,
+on macOS/Linux: `DURE_BUILD_PRESERVE_CACHES=1 pnpm build:app`. This does not change
+explicit `pnpm disk:gc` operations; do not run those when preserving caches.
+
 For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
 produce the native desktop app.
 

@@ -15,10 +15,57 @@ import {
   ensureHeadroom,
 } from "./build-storage-admission.mjs";
 import { inspectBuildStorageReservations } from "./build-storage-reservation.mjs";
-import { GIB } from "./disk-space.mjs";
+import { buildStorageBudget, GIB } from "./disk-space.mjs";
 import { withoutLocalGitOverrides } from "./git-environment.mjs";
 
 describe("build storage admission", () => {
+  it.each([0, 4 * GIB])("preserves caches and refuses low capacity with requested bytes %s", (requestedBytes) => {
+    const reclaimOutputs = vi.fn(() => ({
+      availableAfter: 200 * GIB, removed: [], removedBytes: 0,
+    }));
+    const reserve = vi.fn(() => ({
+      ok: false, reason: "insufficient_unreserved_space", reservedBytes: 20 * GIB,
+    }));
+    const result = ensureHeadroom({
+      environment: { DURE_BUILD_PRESERVE_CACHES: "1" },
+      label: "fixture", requestedBytes, floorBytes: 60 * GIB,
+      observeAvailableBytes: () => 50 * GIB,
+      reclaimOutputs, reserve, log: () => {},
+    });
+    expect(result).toMatchObject({ ok: false, report: null, availableBytes: 50 * GIB, reservation: null });
+    expect(result.message).toContain("Cache preservation is enabled");
+    expect(result.message).toContain(requestedBytes > 0 ? "84.0 GiB" : "60.0 GiB");
+    expect(result.message).toContain("pnpm disk:status");
+    expect(reclaimOutputs).not.toHaveBeenCalled();
+    expect(reserve).toHaveBeenCalledTimes(requestedBytes > 0 ? 1 : 0);
+  });
+
+  it("keeps preservation through runner admission and admitted child builds without lowering budgets", () => {
+    const environment = { DURE_BUILD_PRESERVE_CACHES: "1" };
+    const reclaimOutputs = vi.fn();
+    const release = vi.fn();
+    let available = 1;
+    const reserve = vi.fn(({ requestedBytes, floorBytes }) => available >= requestedBytes + floorBytes
+      ? { ok: true, reservation: { release } }
+      : { ok: false, reason: "insufficient_unreserved_space", reservedBytes: 0 });
+    const admit = (options) => ensureHeadroom({
+      ...options, observeAvailableBytes: () => available, reclaimOutputs, log: () => {},
+      reserve,
+    });
+    const run = vi.fn(() => ({ status: 0 }));
+    const invoke = () => runWithBuildStorage(["frontend", "--", "fixture"], { environment, admit, run });
+    expect(invoke).toThrow("Cache preservation is enabled");
+    expect(run).not.toHaveBeenCalled();
+    expect(reclaimOutputs).not.toHaveBeenCalled();
+    expect(reserve).toHaveBeenCalledWith(expect.objectContaining({
+      requestedBytes: buildStorageBudget("frontend"), floorBytes: 60 * GIB,
+    }));
+    available = 200 * GIB;
+    expect(invoke()).toBe(0);
+    expect(run.mock.calls[0][2].env.DURE_BUILD_PRESERVE_CACHES).toBe("1");
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("reports the holding worktree and refuses the runner until its real lease is released", () => {
     const root = mkdtempSync(join(tmpdir(), "dure-storage-refusal-"));
     const repository = join(root, "repository");

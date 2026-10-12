@@ -26,6 +26,22 @@ function capacityUnavailableMessage(label, available, requested, admission) {
   ].join("\n");
 }
 
+function cachePreservationRefusal(label, available, required, diagnostics) {
+  return {
+    ok: false,
+    report: null,
+    availableBytes: available,
+    reservation: null,
+    message: [
+      `${label} was not started — it needs ${formatBytes(required)} free; this volume has ${formatBytes(available)}.`,
+      "Cache preservation is enabled (DURE_BUILD_PRESERVE_CACHES=1); no automatic reclamation was attempted.",
+      formatBuildStorageReservationDiagnostics(diagnostics),
+      "Inspect without deleting caches: pnpm disk:status",
+      "Retry after capacity or the listed reservations change.",
+    ].join("\n"),
+  };
+}
+
 /** One admission boundary for build growth: adopt an inherited capability or
  * publish a host-wide reservation, run only safe reclaim when capacity is
  * insufficient, then retry once against a fresh physical observation. */
@@ -137,6 +153,9 @@ export function ensureHeadroom({
     const existingReservedBytes = Math.max(0, admission.reservedBytes ?? 0);
     const requiredFloor = floorBytes + existingReservedBytes + requestedBytes;
     const requiredGoal = goalBytes + existingReservedBytes + requestedBytes;
+    if (environment.DURE_BUILD_PRESERVE_CACHES === "1") {
+      return cachePreservationRefusal(label, before, requiredFloor, admission.diagnostics);
+    }
     // State the requirement the reservation actually enforces. Reporting only
     // the floor next to physical free space reads as a contradiction whenever
     // physical free exceeds the floor, which is the common case: the request
@@ -228,6 +247,10 @@ export function ensureHeadroom({
       availableBytes: before,
       reservation: null,
     };
+  }
+
+  if (environment.DURE_BUILD_PRESERVE_CACHES === "1") {
+    return cachePreservationRefusal(label, before, floorBytes);
   }
 
   log(
