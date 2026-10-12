@@ -135,6 +135,7 @@ async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attem
             operation_id: operation_id.clone(),
             expected_journal_revision: 2,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding }),
                 launch_idempotency_key: None,
             },

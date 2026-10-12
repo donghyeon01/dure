@@ -302,6 +302,7 @@ async fn park_replaced_binding(
             operation_id: intent.operation_id,
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "fixture-target-failed",

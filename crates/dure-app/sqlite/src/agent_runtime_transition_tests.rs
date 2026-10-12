@@ -241,6 +241,7 @@ async fn transition_commit_atomically_replaces_the_single_active_selection() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(target_authority),
             },
@@ -345,6 +346,7 @@ async fn target_started_requires_the_provider_published_exact_authority() {
         &plan.operation_id,
         stopped.journal_revision,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            workspace: None,
             launch_idempotency_key: None,
             authority: Box::new(target_authority.clone()),
         },
@@ -428,6 +430,7 @@ async fn native_target_started_replay_rechecks_the_current_checkpoint_authority(
         &plan.operation_id,
         stopped.journal_revision,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            workspace: None,
             launch_idempotency_key: Some("runtime-native-successor-key".into()),
             authority: Box::new(target_authority),
         },
@@ -531,6 +534,7 @@ async fn repair_authorization_is_exact_and_replay_cannot_authorize_another_effec
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: failure.clone(),
                 replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
             },
@@ -563,6 +567,7 @@ async fn repair_authorization_is_exact_and_replay_cannot_authorize_another_effec
             &plan.operation_id,
             authorized.journal_revision,
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure,
                 replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
             },
@@ -604,6 +609,7 @@ async fn corrected_target_atomically_replaces_one_failed_intent() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "claude_launch_failed",
@@ -697,6 +703,7 @@ async fn successor_insert_failure_rolls_back_the_superseded_record() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "claude_launch_failed",
@@ -835,6 +842,7 @@ async fn commit_journal_failure_rolls_back_the_selection_replacement() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(target_authority),
             },

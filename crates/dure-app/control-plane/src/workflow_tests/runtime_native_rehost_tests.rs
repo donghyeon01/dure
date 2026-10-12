@@ -219,6 +219,7 @@ async fn start_native_runtime_transition(
             operation_id: operation_id.clone(),
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: Some(launch_identity.launch_idempotency_key),
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::NativeCli {
                     authority: target_authority.clone(),
@@ -656,6 +657,7 @@ async fn native_resume_publishes_a_ready_target_without_retiring_repair_authorit
             operation_id: failed_operation.clone(),
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "structured_runtime_launch_failed",
@@ -1988,6 +1990,7 @@ async fn native_rehost_adopts_a_verified_orphan_only_after_exact_source_stop() {
             operation_id: repair_operation.clone(),
             expected_journal_revision: repair.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "hmux_managed_conversation_writer_conflict",
@@ -2543,6 +2546,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             operation_id: repair_operation_id.clone(),
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "hmux_managed_conversation_writer_conflict",
@@ -2827,6 +2831,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             operation_id: failed_chat_operation_id.clone(),
             expected_journal_revision: stopped_failed_chat.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "codex_app_server_recovery_required",

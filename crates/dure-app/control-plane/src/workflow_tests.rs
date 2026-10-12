@@ -3363,6 +3363,7 @@ async fn park_structured_credential_transition(
             operation_id,
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::CredentialUnavailable,
                     "fixture_credential_unavailable",
@@ -4363,6 +4364,7 @@ async fn runtime_recovery_authority_waits_for_operations_admitted_after_startup(
             operation_id: intent.operation_id.clone(),
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                     binding: target_binding,

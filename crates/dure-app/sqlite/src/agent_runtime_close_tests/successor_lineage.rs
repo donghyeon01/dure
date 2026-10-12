@@ -39,6 +39,7 @@ async fn park(
             operation_id: transition.intent.operation_id.clone(),
             expected_journal_revision: transition.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::CredentialUnavailable,
                     "fixture_target_unavailable",

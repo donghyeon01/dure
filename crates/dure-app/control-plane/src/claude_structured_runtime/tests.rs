@@ -444,6 +444,7 @@ fn lazy_reopen_projects_only_the_latest_committed_structured_authority() {
             operation_id: stopped.intent.operation_id.clone(),
             expected_journal_revision: 2,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                     binding: AgentInteractionBindingV1 {
@@ -596,6 +597,7 @@ fn lazy_reopen_projects_only_the_latest_committed_structured_authority() {
             operation_id: second_stopped.intent.operation_id.clone(),
             expected_journal_revision: 2,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                     binding: AgentInteractionBindingV1 {

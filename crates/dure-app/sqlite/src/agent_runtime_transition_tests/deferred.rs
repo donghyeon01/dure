@@ -186,6 +186,7 @@ async fn deferred_target_stays_asleep_across_store_restart_until_exact_wake() {
                 &plan.operation_id,
                 2,
                 AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure: AgentRuntimeTargetFailureV1::new(
                         AgentRuntimeTargetFailureKindV1::LaunchFailed,
                         "fixture"
@@ -290,6 +291,7 @@ async fn concurrent_wake_authorizes_only_one_replacement_and_late_replay_is_obse
             &plan.operation_id,
             3,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 authority: Box::new(target),
                 launch_idempotency_key: Some(identity.launch_idempotency_key),
             },
@@ -459,6 +461,7 @@ async fn deferred_wake_keeps_existing_repair_and_successor_fences() {
         .await
         .unwrap();
     let failed = AgentRuntimeTransitionAdvanceV1::RepairRequired {
+        replacement_workspace: None,
         failure: AgentRuntimeTargetFailureV1::new(
             AgentRuntimeTargetFailureKindV1::LaunchFailed,
             "fixture_failure",

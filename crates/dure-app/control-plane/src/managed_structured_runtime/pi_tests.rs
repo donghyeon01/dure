@@ -122,6 +122,7 @@ async fn replace(
         store,
         &stopped,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            workspace: None,
             authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                 binding: target.clone(),
             }),

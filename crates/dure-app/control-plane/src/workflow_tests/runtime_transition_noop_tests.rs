@@ -217,6 +217,7 @@ async fn commit_intervening_selection(
         .advance_agent_runtime_transition(&advance(
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: (!credential_change).then(|| {
                     dure_app::agent_runtime_native_launch_identity_v1(&intent.operation_id)
                         .launch_idempotency_key

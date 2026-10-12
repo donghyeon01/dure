@@ -53,6 +53,7 @@ pub fn advance_agent_runtime_transition_v1(
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
                 failure,
                 replacement_authority,
+                replacement_workspace,
             },
         ) => {
             failure.validate()?;
@@ -69,6 +70,12 @@ pub fn advance_agent_runtime_transition_v1(
                     )?;
                 }
                 next.replacement_authority = authority.as_deref().cloned();
+                next.replacement_workspace = replacement_workspace.clone();
+            } else if replacement_workspace.is_some() {
+                return Err(invalid(
+                    "replacementWorkspace",
+                    "cannot change preserved replacement placement",
+                ));
             }
         }
         (
@@ -76,6 +83,7 @@ pub fn advance_agent_runtime_transition_v1(
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
                 authority,
                 launch_idempotency_key,
+                workspace,
             },
         ) => {
             authority.validate_for_transition_target(
@@ -95,8 +103,10 @@ pub fn advance_agent_runtime_transition_v1(
             }
             next.state = AgentRuntimeTransitionStateV1::TargetStarted;
             next.target_authority = Some(authority.as_ref().clone());
+            next.target_workspace = workspace.clone();
             next.target_launch_idempotency_key = launch_idempotency_key.clone();
             next.replacement_authority = None;
+            next.replacement_workspace = None;
             next.target_failure = None;
         }
         (
@@ -104,6 +114,7 @@ pub fn advance_agent_runtime_transition_v1(
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
                 failure,
                 replacement_authority,
+                replacement_workspace,
             },
         ) if current.intent.workspace_move.is_some() => {
             // Retain the exact uncommitted target before attempting cleanup.
@@ -114,6 +125,7 @@ pub fn advance_agent_runtime_transition_v1(
                 .map(AgentRuntimeReplacementAuthorityV1);
             if !matches!(replacement_authority, AgentRuntimeReplacementAuthorityUpdateV1::Replace { authority }
                 if authority.as_deref() == expected.as_ref())
+                || replacement_workspace != &current.target_workspace
             {
                 return Err(invalid(
                     "replacementAuthority",
@@ -123,6 +135,8 @@ pub fn advance_agent_runtime_transition_v1(
             next.state = AgentRuntimeTransitionStateV1::RepairRequired;
             next.target_failure = Some(failure.clone());
             next.replacement_authority = expected;
+            next.replacement_workspace = current.target_workspace.clone();
+            next.target_workspace = None;
             next.target_authority = None;
             next.target_launch_idempotency_key = None;
             next.post_start_rejections = next
@@ -170,23 +184,29 @@ fn advance_matches_current(
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
                 authority,
                 launch_idempotency_key,
+                workspace,
             },
         ) => {
             current.target_authority.as_ref() == Some(authority.as_ref())
                 && current.target_launch_idempotency_key == *launch_idempotency_key
+                && current.target_workspace == *workspace
         }
         (
             AgentRuntimeTransitionStateV1::RepairRequired,
             AgentRuntimeTransitionAdvanceV1::RepairRequired {
                 failure,
                 replacement_authority,
+                replacement_workspace,
             },
         ) => {
             current.target_failure.as_ref() == Some(failure)
                 && match replacement_authority {
-                    AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting => true,
+                    AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting => {
+                        replacement_workspace.is_none()
+                    }
                     AgentRuntimeReplacementAuthorityUpdateV1::Replace { authority } => {
                         current.replacement_authority.as_ref() == authority.as_deref()
+                            && current.replacement_workspace == *replacement_workspace
                     }
                 }
         }

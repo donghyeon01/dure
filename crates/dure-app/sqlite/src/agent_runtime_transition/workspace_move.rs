@@ -42,8 +42,15 @@ pub(super) async fn commit(
             .await?
             .as_ref()
             != Some(&movement.target_workspace)
-        || !matches!(&record.target_authority, Some(AgentRuntimeBindingAuthorityV1::NativeCli {authority})
-            if authority.runtime_workspace_id == movement.target_workspace.workspace_id.as_str())
+        || !match &record.target_authority {
+            Some(AgentRuntimeBindingAuthorityV1::NativeCli { authority }) => {
+                authority.runtime_workspace_id == movement.target_workspace.workspace_id.as_str()
+            }
+            Some(AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }) => {
+                record.target_workspace.as_ref() == Some(&movement.target_workspace)
+            }
+            None => false,
+        }
     {
         return Err(conflict(&record.intent));
     }

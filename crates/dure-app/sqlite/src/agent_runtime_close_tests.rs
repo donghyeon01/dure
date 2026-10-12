@@ -158,6 +158,7 @@ async fn park_transition(
             operation_id: intent.operation_id.clone(),
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::CredentialUnavailable,
                     "credential_unavailable",

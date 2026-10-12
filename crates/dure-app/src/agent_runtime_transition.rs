@@ -538,8 +538,7 @@ impl AgentRuntimeTransitionIntentV1 {
                 || movement.target_workspace.project_id != movement.target_project.project_id
                 || movement.target_workspace.root_path != movement.target_project.root_path
                 || movement.source_workspace.workspace_id == movement.target_workspace.workspace_id
-                || self.source.interaction_profile != AgentInteractionProfileV1::NativeCli
-                || self.target_interaction_profile != AgentInteractionProfileV1::NativeCli
+                || self.source.interaction_profile != self.target_interaction_profile
                 || self.source.execution_profile != self.target_execution_profile
                 || self.provider_conversation_ref.as_option().is_none()
                 || !self.source_stop_policy.requires_idle()
@@ -550,7 +549,7 @@ impl AgentRuntimeTransitionIntentV1 {
             {
                 return Err(invalid(
                     "workspaceMove",
-                    "invalid native conversation workspace handoff",
+                    "invalid conversation workspace handoff",
                 ));
             }
         }
@@ -743,6 +742,10 @@ pub struct AgentRuntimeTransitionRecordV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_target: Option<AgentRuntimeDeferredTargetV1>,
     pub target_authority: Option<AgentRuntimeBindingAuthorityV1>,
+    /// Workspace accepted by a structured replacement runtime. Native targets
+    /// already carry the runtime workspace in their Hmux authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_workspace: Option<crate::WorkspaceRecordV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_launch_idempotency_key: Option<String>,
     /// The one exact provider/runtime fence the next target effect must replace
@@ -751,6 +754,10 @@ pub struct AgentRuntimeTransitionRecordV1 {
     /// atomically moves it to the successor intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_authority: Option<AgentRuntimeReplacementAuthorityV1>,
+    /// Placement belongs to the same exact failed target as replacement_authority,
+    /// including while a corrected successor restores the original workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_workspace: Option<crate::WorkspaceRecordV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_failure: Option<AgentRuntimeTargetFailureV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -787,8 +794,10 @@ impl AgentRuntimeTransitionRecordV1 {
             state: AgentRuntimeTransitionStateV1::Admitted,
             deferred_target,
             target_authority: None,
+            target_workspace: None,
             target_launch_idempotency_key: None,
             replacement_authority: None,
+            replacement_workspace: None,
             target_failure: None,
             last_repair_operation_id: None,
             predecessor_operation_id: None,
@@ -810,13 +819,14 @@ impl AgentRuntimeTransitionRecordV1 {
         intent: AgentRuntimeTransitionIntentV1,
         predecessor_operation_id: OperationIdV1,
     ) -> Result<Self, DomainStoreErrorV1> {
-        Self::successor_after_stopped_source(intent, predecessor_operation_id, None)
+        Self::successor_after_stopped_source(intent, predecessor_operation_id, None, None)
     }
 
     fn successor_after_stopped_source(
         intent: AgentRuntimeTransitionIntentV1,
         predecessor_operation_id: OperationIdV1,
         replacement_authority: Option<AgentRuntimeReplacementAuthorityV1>,
+        replacement_workspace: Option<crate::WorkspaceRecordV1>,
     ) -> Result<Self, DomainStoreErrorV1> {
         intent.validate_after_stopped_source()?;
         if intent.operation_id == predecessor_operation_id {
@@ -832,8 +842,10 @@ impl AgentRuntimeTransitionRecordV1 {
             state: AgentRuntimeTransitionStateV1::SourceStopped,
             deferred_target: None,
             target_authority: None,
+            target_workspace: None,
             target_launch_idempotency_key: None,
             replacement_authority,
+            replacement_workspace,
             target_failure: None,
             last_repair_operation_id: None,
             predecessor_operation_id: Some(predecessor_operation_id),
@@ -878,6 +890,60 @@ impl AgentRuntimeTransitionRecordV1 {
                 "predecessorOperationId",
                 "a successor starts after the stopped-source boundary",
             ));
+        }
+        if let Some(workspace) = &self.target_workspace {
+            workspace.validate()?;
+            if !matches!(
+                &self.target_authority,
+                Some(AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. })
+            ) {
+                return Err(invalid(
+                    "targetWorkspace",
+                    "requires a structured target authority",
+                ));
+            }
+        }
+        if let Some(workspace) = &self.replacement_workspace {
+            workspace.validate()?;
+            if !matches!(
+                &self.replacement_authority,
+                Some(AgentRuntimeReplacementAuthorityV1(
+                    AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }
+                ))
+            ) {
+                return Err(invalid(
+                    "replacementWorkspace",
+                    "requires an exact structured replacement authority",
+                ));
+            }
+        }
+        if let Some(movement) = &self.intent.workspace_move {
+            if self.intent.target_interaction_profile
+                == AgentInteractionProfileV1::StructuredProtocol
+                && matches!(
+                    self.state,
+                    AgentRuntimeTransitionStateV1::TargetStarted
+                        | AgentRuntimeTransitionStateV1::Committed
+                )
+                && self.target_workspace.as_ref() != Some(&movement.target_workspace)
+            {
+                return Err(invalid(
+                    "targetWorkspace",
+                    "must prove the admitted structured workspace",
+                ));
+            }
+            if matches!(
+                &self.replacement_authority,
+                Some(AgentRuntimeReplacementAuthorityV1(
+                    AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }
+                ))
+            ) && self.replacement_workspace.as_ref() != Some(&movement.target_workspace)
+            {
+                return Err(invalid(
+                    "replacementWorkspace",
+                    "must retain the failed structured destination",
+                ));
+            }
         }
         if let Some(authority) = &self.replacement_authority {
             authority.validate_for_transition_identity(
@@ -1020,11 +1086,15 @@ pub enum AgentRuntimeTransitionAdvanceV1 {
     RepairRequired {
         failure: AgentRuntimeTargetFailureV1,
         replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replacement_workspace: Option<crate::WorkspaceRecordV1>,
     },
     TargetStarted {
         authority: Box<AgentRuntimeBindingAuthorityV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         launch_idempotency_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<crate::WorkspaceRecordV1>,
     },
     Committed,
 }
@@ -1051,8 +1121,21 @@ impl AgentRuntimeTransitionAdvanceRequestV1 {
         if let AgentRuntimeTransitionAdvanceV1::TargetStarted {
             authority,
             launch_idempotency_key,
+            workspace,
         } = &self.advance
         {
+            if let Some(workspace) = workspace {
+                workspace.validate()?;
+                if !matches!(
+                    authority.as_ref(),
+                    AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }
+                ) {
+                    return Err(invalid(
+                        "targetWorkspace",
+                        "is only valid for a structured target",
+                    ));
+                }
+            }
             match (authority.as_ref(), launch_idempotency_key) {
                 (AgentRuntimeBindingAuthorityV1::NativeCli { .. }, Some(key)) => {
                     validate_token("targetLaunchIdempotencyKey", key)?;
@@ -1246,6 +1329,7 @@ pub fn supersede_agent_runtime_transition_v1(
         successor.clone(),
         current.intent.operation_id.clone(),
         current.replacement_authority.clone(),
+        current.replacement_workspace.clone(),
     )?;
     let mut superseded = current.clone();
     superseded.state = AgentRuntimeTransitionStateV1::Superseded;
@@ -1253,6 +1337,7 @@ pub fn supersede_agent_runtime_transition_v1(
     // into the successor. The predecessor keeps its typed diagnostic but no
     // second copy of effect authority.
     superseded.replacement_authority = None;
+    superseded.replacement_workspace = None;
     superseded.superseded_by_operation_id = Some(successor.operation_id.clone());
     superseded.journal_revision += 1;
     superseded.updated_at_ms = request.superseded_at_ms;
@@ -1520,6 +1605,7 @@ mod tests {
                     operation_id: fresh_native.operation_id.clone(),
                     expected_journal_revision: 2,
                     advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                        workspace: None,
                         launch_idempotency_key: None,
                         authority: Box::new(structured_authority_with_conversation(conversation)),
                     },
@@ -1556,6 +1642,7 @@ mod tests {
                         operation_id: resume_stopped.intent.operation_id.clone(),
                         expected_journal_revision: 2,
                         advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                            workspace: None,
                             launch_idempotency_key: None,
                             authority: Box::new(structured_authority_with_conversation(
                                 conversation
@@ -1593,6 +1680,7 @@ mod tests {
                 operation_id: stopped.intent.operation_id.clone(),
                 expected_journal_revision: 2,
                 advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure: AgentRuntimeTargetFailureV1::new(
                         AgentRuntimeTargetFailureKindV1::LaunchFailed,
                         "structured_target_failed_after_identity",
@@ -1639,6 +1727,7 @@ mod tests {
             operation_id: stopped.intent.operation_id.clone(),
             expected_journal_revision: 2,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(structured_authority()),
             },
@@ -1828,6 +1917,7 @@ mod tests {
                 operation_id: stopped.intent.operation_id.clone(),
                 expected_journal_revision: stopped.journal_revision,
                 advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                    workspace: None,
                     authority: Box::new(native_authority()),
                     launch_idempotency_key: Some("runtime-native-successor-key".into()),
                 },
@@ -1886,6 +1976,7 @@ mod tests {
                     operation_id: stopped.intent.operation_id.clone(),
                     expected_journal_revision: 2,
                     advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                        workspace: None,
                         launch_idempotency_key: None,
                         authority: Box::new(wrong),
                     },
@@ -1922,6 +2013,7 @@ mod tests {
                 operation_id: stopped.intent.operation_id.clone(),
                 expected_journal_revision: 2,
                 advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure: failure.clone(),
                     replacement_authority:
                         AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
@@ -1949,6 +2041,7 @@ mod tests {
                 operation_id: authorized.intent.operation_id.clone(),
                 expected_journal_revision: authorized.journal_revision,
                 advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure,
                     replacement_authority:
                         AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
@@ -1995,6 +2088,7 @@ mod tests {
                     operation_id: current.intent.operation_id.clone(),
                     expected_journal_revision: current.journal_revision,
                     advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                        replacement_workspace: None,
                         failure: failure.clone(),
                         replacement_authority:
                             AgentRuntimeReplacementAuthorityUpdateV1::PreserveExisting,
@@ -2064,6 +2158,7 @@ mod tests {
                 operation_id: stopped.intent.operation_id.clone(),
                 expected_journal_revision: 2,
                 advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure: AgentRuntimeTargetFailureV1::new(
                         AgentRuntimeTargetFailureKindV1::LaunchFailed,
                         "claude_launch_failed",

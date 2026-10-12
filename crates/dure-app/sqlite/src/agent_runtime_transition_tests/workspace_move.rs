@@ -65,6 +65,7 @@ async fn start_target(store: &SqliteDomainStore, plan: &AgentRuntimeTransitionIn
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::NativeCli { authority }),
                 launch_idempotency_key: Some(identity.launch_idempotency_key),
             },
@@ -362,4 +363,237 @@ async fn workspace_move_refuses_a_changed_or_closing_checkout_at_admission_and_c
             );
         }
     }
+}
+
+async fn structured_move_target(
+    store: &SqliteDomainStore,
+) -> (
+    AgentRuntimeTransitionIntentV1,
+    AgentRuntimeBindingAuthorityV1,
+) {
+    let mut plan = move_plan(store).await;
+    let AgentRuntimeBindingAuthorityV1::StructuredProtocol { mut binding } = structured_authority()
+    else {
+        panic!()
+    };
+    binding.created_at_ms = 90;
+    binding.updated_at_ms = 100;
+    plan.source.interaction_profile = AgentInteractionProfileV1::StructuredProtocol;
+    plan.target_interaction_profile = AgentInteractionProfileV1::StructuredProtocol;
+    plan.source_authority = AgentRuntimeBindingAuthorityV1::StructuredProtocol {
+        binding: binding.clone(),
+    };
+    store.create_agent_interaction(&binding).await.unwrap();
+    store
+        .initialize_agent_runtime_selection(&plan.source)
+        .await
+        .unwrap();
+    store.admit_agent_runtime_transition(&plan).await.unwrap();
+    store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            1,
+            AgentRuntimeTransitionAdvanceV1::SourceStopped,
+            120,
+        ))
+        .await
+        .unwrap();
+    let target = store
+        .replace_agent_interaction_runtime(&dure_app::AgentRuntimeReplacementV1 {
+            schema_version: 1,
+            interaction_session_id: binding.interaction_session_id,
+            expected_binding_revision: binding.binding_revision,
+            source: binding.runtime,
+            source_execution_profile: binding.execution_profile.clone(),
+            target: AgentProviderRuntimeFenceV1 {
+                runtime_generation: "moved-runtime".into(),
+                provider_epoch: "moved-epoch".into(),
+            },
+            target_execution_profile: binding.execution_profile,
+            provider_conversation_ref: binding.provider_conversation_ref,
+            replaced_at_ms: 130,
+        })
+        .await
+        .unwrap();
+    (
+        plan,
+        AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding: target },
+    )
+}
+
+#[tokio::test]
+async fn structured_workspace_move_requires_exact_target_placement_and_reopens_atomically() {
+    let root = TempDir::new().unwrap();
+    let path = database_path(&root);
+    let store = initialized_store(&path).await;
+    let (plan, authority) = structured_move_target(&store).await;
+    let movement = plan.workspace_move.as_ref().unwrap();
+    for workspace in [None, Some(movement.source_workspace.clone())] {
+        assert!(
+            store
+                .advance_agent_runtime_transition(&advance(
+                    &plan.operation_id,
+                    2,
+                    AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                        authority: Box::new(authority.clone()),
+                        launch_idempotency_key: None,
+                        workspace
+                    },
+                    130
+                ))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.agent(&plan.source.agent_id).await.unwrap(),
+            Some(movement.source_agent.clone())
+        );
+    }
+    store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            2,
+            AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                authority: Box::new(authority),
+                launch_idempotency_key: None,
+                workspace: Some(movement.target_workspace.clone()),
+            },
+            130,
+        ))
+        .await
+        .unwrap();
+    let committed = store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            3,
+            AgentRuntimeTransitionAdvanceV1::Committed,
+            140,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .agent(&plan.source.agent_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .workspace_id,
+        movement.target_workspace.workspace_id
+    );
+    drop(store);
+    let reopened = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .agent_runtime_transition(&plan.operation_id)
+            .await
+            .unwrap(),
+        Some(committed.clone())
+    );
+    assert_eq!(
+        committed.target_workspace,
+        Some(movement.target_workspace.clone())
+    );
+    assert_eq!(
+        reopened
+            .agent_runtime_selection(&plan.source.agent_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+        plan.source.revision + 1
+    );
+}
+
+#[tokio::test]
+async fn structured_workspace_move_transfers_failed_placement_to_source_folder_repair() {
+    let root = TempDir::new().unwrap();
+    let store = initialized_store(&database_path(&root)).await;
+    let (plan, authority) = structured_move_target(&store).await;
+    let movement = plan.workspace_move.as_ref().unwrap();
+    store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            2,
+            AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                authority: Box::new(authority.clone()),
+                launch_idempotency_key: None,
+                workspace: Some(movement.target_workspace.clone()),
+            },
+            130,
+        ))
+        .await
+        .unwrap();
+    let failure = AgentRuntimeTargetFailureV1 {
+        kind: AgentRuntimeTargetFailureKindV1::TargetInvalid,
+        provider_code: "destination_changed".into(),
+    };
+    let replacement_authority = AgentRuntimeReplacementAuthorityUpdateV1::Replace {
+        authority: Some(Box::new(dure_app::AgentRuntimeReplacementAuthorityV1(
+            authority,
+        ))),
+    };
+    // Dropping a failed target's placement would make later cleanup ambiguous.
+    assert!(
+        store
+            .advance_agent_runtime_transition(&advance(
+                &plan.operation_id,
+                3,
+                AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    failure: failure.clone(),
+                    replacement_authority: replacement_authority.clone(),
+                    replacement_workspace: None
+                },
+                140
+            ))
+            .await
+            .is_err()
+    );
+    let failed = store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            3,
+            AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                failure,
+                replacement_authority,
+                replacement_workspace: Some(movement.target_workspace.clone()),
+            },
+            140,
+        ))
+        .await
+        .unwrap();
+    let mut successor_intent = plan.clone();
+    successor_intent.operation_id = OperationIdV1::new("restore-source").unwrap();
+    successor_intent.idempotency_key = "restore-source-key".into();
+    successor_intent.workspace_move = None;
+    successor_intent.requested_at_ms = 150;
+    let result = store
+        .supersede_agent_runtime_transition(&AgentRuntimeTransitionSupersedeRequestV1 {
+            schema_version: 1,
+            operation_id: plan.operation_id.clone(),
+            expected_journal_revision: failed.journal_revision,
+            successor_intent,
+            superseded_at_ms: 150,
+        })
+        .await
+        .unwrap();
+    let AgentRuntimeTransitionEffectAuthorizationV1::Authorized(successor) = result else {
+        panic!()
+    };
+    assert_eq!(
+        successor.replacement_workspace,
+        Some(movement.target_workspace.clone())
+    );
+    assert!(successor.target_workspace.is_none());
+    assert!(successor.intent.workspace_move.is_none());
+    let superseded = store
+        .agent_runtime_transition(&plan.operation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(superseded.replacement_workspace.is_none());
+    assert!(superseded.replacement_authority.is_none());
+    assert_eq!(
+        store.agent(&plan.source.agent_id).await.unwrap(),
+        Some(movement.source_agent.clone())
+    );
 }

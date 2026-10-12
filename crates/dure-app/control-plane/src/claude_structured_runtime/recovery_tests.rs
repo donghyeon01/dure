@@ -917,6 +917,7 @@ async fn failed_published_target_parks_until_the_next_explicit_open() {
             operation_id: native_to_structured.intent.operation_id.clone(),
             expected_journal_revision: native_to_structured.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                     binding: binding.clone(),
@@ -981,6 +982,7 @@ async fn failed_published_target_parks_until_the_next_explicit_open() {
             operation_id: structured_to_structured.intent.operation_id.clone(),
             expected_journal_revision: structured_to_structured.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                     binding: binding.clone(),

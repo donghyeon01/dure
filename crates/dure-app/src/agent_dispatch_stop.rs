@@ -229,6 +229,7 @@ impl AgentDispatchStopPlanV1 {
             }
             AgentRuntimeTransitionStateV1::SourceStopped if !record.is_dormant() => {
                 Some(AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                    replacement_workspace: None,
                     failure: AgentRuntimeTargetFailureV1::new(
                         AgentRuntimeTargetFailureKindV1::TargetInvalid,
                         "agent_dispatch_stop_target_superseded",

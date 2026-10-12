@@ -812,6 +812,7 @@ async fn start_structured_target(
         state,
         transition,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            workspace: None,
             authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
                 binding: opened,
             }),

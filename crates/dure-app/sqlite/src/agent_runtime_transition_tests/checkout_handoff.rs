@@ -139,6 +139,7 @@ async fn native_origin_selects_only_its_exact_transition_target() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 authority: Box::new(target),
                 launch_idempotency_key: Some("native-target-create".into()),
             },
@@ -443,6 +444,7 @@ async fn structured_transition_preserves_the_adopted_resource_lifetime() {
             &plan.operation_id,
             2,
             AgentRuntimeTransitionAdvanceV1::TargetStarted {
+                workspace: None,
                 launch_idempotency_key: None,
                 authority: Box::new(target),
             },

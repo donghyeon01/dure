@@ -755,6 +755,7 @@ async fn failed_chat_retirement_advances_from_the_current_binding_generation() {
             operation_id,
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::LaunchFailed,
                     "managed_provider_managed_create_rejected",

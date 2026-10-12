@@ -782,6 +782,7 @@ pub(super) async fn start_target(
         state,
         transition,
         AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            workspace: None,
             authority: Box::new(AgentRuntimeBindingAuthorityV1::NativeCli { authority }),
             launch_idempotency_key: Some(launch_idempotency_key),
         },

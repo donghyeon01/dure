@@ -67,6 +67,7 @@ pub(crate) async fn drive_locked(
                             state,
                             &transition,
                             AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                                replacement_workspace: None,
                                 failure: failure.clone(),
                                 replacement_authority: replacement_authority.clone(),
                             },
@@ -145,6 +146,7 @@ async fn reject_workspace_target(
         state,
         transition,
         AgentRuntimeTransitionAdvanceV1::RepairRequired {
+            replacement_workspace: transition.target_workspace.clone(),
             failure: AgentRuntimeTargetFailureV1 {
                 kind: AgentRuntimeTargetFailureKindV1::TargetInvalid,
                 provider_code: code,

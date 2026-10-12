@@ -1228,6 +1228,7 @@ async fn dispatch_stop_closes_an_exact_repair_required_transition() {
             operation_id: transition_id,
             expected_journal_revision: stopped.journal_revision,
             advance: AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                replacement_workspace: None,
                 failure: AgentRuntimeTargetFailureV1::new(
                     AgentRuntimeTargetFailureKindV1::CredentialUnavailable,
                     "dispatch_stop_target_unavailable",
