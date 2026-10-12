@@ -88,7 +88,13 @@ export interface RuntimeProjectionContextV1<ProviderId extends string = string> 
     readonly operationId: string;
     readonly committedSelectionRevision: number;
     readonly sourceRootPath: string;
-    readonly sourceAuthority: {
+    readonly sourceStructuredBinding?: {
+      readonly agentId: string;
+      readonly providerId: ProviderId;
+      readonly interactionSessionId: string;
+      readonly providerConversationRef: string;
+    };
+    readonly sourceAuthority?: {
       readonly runtimeWorkspaceId: string;
       readonly runnerPrincipal: string;
       readonly runnerInstance: string;

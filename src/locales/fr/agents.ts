@@ -370,5 +370,5 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.status": "Vérifier l’état",
 	"agents.projectMove.repair": "Reprendre dans le dossier initial",
 	"agents.projectMove.versionRequired":
-		"Impossible de vérifier une version sûre du fournisseur. Le déplacement de Claude nécessite actuellement Claude Code 2.1.223–2.1.284 ; les versions ultérieures peuvent rejoindre une session en arrière-plan dans son dossier initial.",
+		"Impossible de vérifier une version sûre du fournisseur. Le déplacement de Claude en mode Terminal nécessite actuellement Claude Code 2.1.223–2.1.284 ; les versions ultérieures peuvent rejoindre une session en arrière-plan dans son dossier initial.",
 };

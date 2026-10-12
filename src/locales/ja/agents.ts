@@ -371,5 +371,5 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.status": "状態を確認",
 	"agents.projectMove.repair": "元のフォルダーで再開",
 	"agents.projectMove.versionRequired":
-		"安全に移動できるバージョンを確認できませんでした。現在、Claude の移動には Claude Code 2.1.223–2.1.284 が必要です。新しいバージョンでは元のフォルダーのバックグラウンドセッションに接続する場合があります。",
+		"安全に移動できるバージョンを確認できませんでした。現在、Claude の Terminal モードの移動には Claude Code 2.1.223–2.1.284 が必要です。新しいバージョンでは元のフォルダーのバックグラウンドセッションに接続する場合があります。",
 };

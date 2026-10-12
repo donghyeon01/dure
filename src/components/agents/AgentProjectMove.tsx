@@ -34,6 +34,15 @@ export function AgentProjectMove({
 	const [error, setError] = useState<string>();
 	const [attempted, setAttempted] = useState(false);
 	const [repairAvailable, setRepairAvailable] = useState(false);
+	const finish = () => {
+		setOpen(false);
+		setPrepared(undefined);
+		setPlan(undefined);
+		setProjectId("");
+		setAttempted(false);
+		setRepairAvailable(false);
+		setError(undefined);
+	};
 	const prepare = async () => {
 		const next = await prepareAgentProjectMove(agentId);
 		setPrepared(next);
@@ -163,7 +172,7 @@ export function AgentProjectMove({
 											setPlan(undefined);
 											setAttempted(false);
 											setPrepared(undefined);
-										} else if (status === "completed") setOpen(false);
+										} else if (status === "completed") finish();
 										else setError("unconfirmed");
 									})
 								}
@@ -178,7 +187,7 @@ export function AgentProjectMove({
 									onClick={() =>
 										void run(async () => {
 											await prepared?.repair(plan);
-											setOpen(false);
+											finish();
 										})
 									}
 								>
@@ -221,7 +230,7 @@ export function AgentProjectMove({
 								}
 								setAttempted(true);
 								await prepared.apply(plan);
-								setOpen(false);
+								finish();
 							})
 						}
 					/>

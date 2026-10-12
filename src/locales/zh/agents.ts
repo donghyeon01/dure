@@ -371,5 +371,5 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.status": "检查状态",
 	"agents.projectMove.repair": "在原文件夹中恢复",
 	"agents.projectMove.versionRequired":
-		"无法确认可安全移动的提供方版本。目前移动 Claude 对话需要 Claude Code 2.1.223–2.1.284；更新版本可能连接到原文件夹中的后台会话。",
+		"无法确认可安全移动的提供方版本。目前移动 Claude Terminal 模式对话需要 Claude Code 2.1.223–2.1.284；更新版本可能连接到原文件夹中的后台会话。",
 };

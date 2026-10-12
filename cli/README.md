@@ -43,8 +43,9 @@ Both resolve and fence the current live Host generation. Inspect an interactive
 prompt before selecting keys and read the Session afterward to verify its result.
 
 Conversation recovery retains the original project and working folder. Recovery
-commands reject `--project`, `--path` and `--cwd`. To move a stopped native Codex
-conversation, explicitly select a project registered on its owning backend:
+commands reject `--project`, `--path` and `--cwd`. To move an idle or stopped
+Claude or Codex conversation in Chat or Terminal mode, explicitly select a
+project registered on its owning backend:
 
 ```sh
 dure runs move AGENT --project DESTINATION --json

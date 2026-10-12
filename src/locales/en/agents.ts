@@ -370,5 +370,5 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.projectMove.status": "Check status",
 	"agents.projectMove.repair": "Resume in original folder",
 	"agents.projectMove.versionRequired":
-		"Dure could not verify a safe provider version. Claude project moves currently require Claude Code 2.1.223–2.1.284; newer versions may attach a background session in its original folder.",
+		"Dure could not verify a safe provider version. Claude Terminal project moves currently require Claude Code 2.1.223–2.1.284; newer versions may attach a background session in its original folder.",
 };

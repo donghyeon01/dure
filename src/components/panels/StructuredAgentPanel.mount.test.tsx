@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 	historyProps: undefined as Record<string, unknown> | undefined,
 	accountProps: undefined as Record<string, unknown> | undefined,
 	profileProps: undefined as Record<string, unknown> | undefined,
+	moveProps: undefined as Record<string, unknown> | undefined,
 	project: undefined as Project | undefined,
 	accounts: [] as Array<{
 		id: string;
@@ -108,6 +109,12 @@ vi.mock("@/components/agents/AgentCredentialSwitcher", () => ({
 		mocks.accountProps = props;
 		return null;
 	},
+}));
+vi.mock("@/components/agents/AgentProjectMove", () => ({
+  AgentProjectMove: (props: Record<string, unknown>) => {
+    mocks.moveProps = props;
+    return <div data-testid="project-move" />;
+  },
 }));
 vi.mock("@/components/agents/AgentRuntimeProfileSwitch", () => ({
 	AgentRuntimeProfileSwitch: (props: Record<string, unknown>) => {
@@ -194,12 +201,19 @@ function StructuredAgentPanel(
 	);
 }
 
+function busyCallback(props: Record<string, unknown> | undefined, name: string) {
+  const callback = props?.[name];
+  expect(callback).toBeTypeOf("function");
+  return callback as (busy: boolean) => void;
+}
+
 describe("StructuredAgentPanel mount", () => {
 	beforeEach(() => {
 		mocks.chatProps = undefined;
 		mocks.historyProps = undefined;
 		mocks.accountProps = undefined;
 		mocks.profileProps = undefined;
+		mocks.moveProps = undefined;
 		mocks.project = {
 			id: "project-1",
 			name: "Project",
@@ -256,6 +270,143 @@ describe("StructuredAgentPanel mount", () => {
 			projectKind: "local",
 		});
 		expect(mocks.chatProps?.attachmentsEnabled).toBe(true);
+	});
+
+	describe("project moves", () => {
+		let previousPrefs: ReturnType<typeof useStore.getState>["uiPrefs"];
+		beforeEach(() => {
+			previousPrefs = useStore.getState().uiPrefs;
+			useStore.setState({
+				uiPrefs: {
+					...previousPrefs,
+					interfaceMode: "pro",
+					hiddenToolbarControls: [],
+				},
+			});
+		});
+		afterEach(() => useStore.setState({ uiPrefs: previousPrefs }));
+
+		it("shares the project move dialog and blocks other mutations while it applies", () => {
+			render(
+				<StructuredAgentPanel
+					agent={agent}
+					profile={profile}
+					panelProps={panelProps}
+					launchSelection={launchSelection}
+					onRuntimeInvalidated={vi.fn()}
+					switchCredential={vi.fn()}
+					switchToNativeTerminal={vi.fn()}
+				/>,
+			);
+			expect(screen.getByTestId("project-move")).toBeTruthy();
+			expect(mocks.moveProps).toMatchObject({
+				agentId: agent.id,
+				disabled: false,
+			});
+			act(() => busyCallback(mocks.moveProps, "onBusyChange")(true));
+			expect(mocks.chatProps?.disabled).toBe(true);
+			expect(mocks.accountProps?.disabled).toBe(true);
+			expect(mocks.profileProps?.disabled).toBe(true);
+			expect(paneActionSnapshot("agent:agent-1")?.actions).not.toContain(
+				"switch_runtime:terminal",
+			);
+			act(() => busyCallback(mocks.moveProps, "onBusyChange")(false));
+			expect(mocks.chatProps?.disabled).toBe(false);
+		});
+		it("withholds pane interrupt when a turn appears while project move preparation is pending", async () => {
+			const interrupt = vi.fn().mockResolvedValue(undefined);
+			const props = {
+				agent,
+				profile,
+				panelProps,
+				launchSelection,
+				onRuntimeInvalidated: vi.fn(),
+				switchCredential: vi.fn(),
+				switchToNativeTerminal: vi.fn(),
+			};
+			const view = render(<StructuredAgentPanel {...props} />);
+			act(() => busyCallback(mocks.moveProps, "onBusyChange")(true));
+			mocks.chatHook.mockReturnValue({
+				phase: "ready",
+				sending: false,
+				interrupting: false,
+				reconnecting: false,
+				activeTurn: { turnId: "turn-from-another-client" },
+				interrupt,
+			});
+			view.rerender(<StructuredAgentPanel {...props} />);
+			expect(mocks.chatProps?.disabled).toBe(true);
+			expect(paneActionSnapshot("agent:agent-1")?.actions).not.toContain(
+				"interrupt",
+			);
+		});
+		it("a replaced runtime's late completion cannot clear the new owner's move lock", () => {
+			const props = {
+				agent,
+				profile,
+				panelProps,
+				launchSelection,
+				onRuntimeInvalidated: vi.fn(),
+				switchCredential: vi.fn(),
+				switchToNativeTerminal: vi.fn(),
+			};
+			const view = render(<StructuredAgentPanel {...props} />);
+			const oldBusy = busyCallback(mocks.moveProps, "onBusyChange");
+			act(() => oldBusy(true));
+			const nextProfile = { ...profile, interactionSessionId: "interaction-2" };
+			view.rerender(
+				<StructuredAgentPanel
+					{...props}
+					agent={{ ...agent, interactionProfile: nextProfile }}
+					profile={nextProfile}
+				/>,
+			);
+			expect(mocks.chatProps?.disabled).toBe(false);
+			act(() => busyCallback(mocks.moveProps, "onBusyChange")(true));
+			act(() => oldBusy(false));
+			expect(mocks.chatProps?.disabled).toBe(true);
+			expect(mocks.profileProps?.disabled).toBe(true);
+		});
+		it("profile switching locks project moves", () => {
+			render(
+				<StructuredAgentPanel
+					agent={agent}
+					profile={profile}
+					panelProps={panelProps}
+					launchSelection={launchSelection}
+					onRuntimeInvalidated={vi.fn()}
+					switchCredential={vi.fn()}
+					switchToNativeTerminal={vi.fn()}
+				/>,
+			);
+			act(() => busyCallback(mocks.profileProps, "onSwitchingChange")(true));
+			expect(mocks.moveProps?.disabled).toBe(true);
+		});
+		it.each([
+			{ activeTurn: { turnId: "busy-turn" } },
+			{ sending: true },
+			{ interrupting: true },
+			{ answeringRequestId: "request-1" },
+		])("blocks moving a Chat session with a pending mutation: %j", (busy) => {
+			mocks.chatHook.mockReturnValue({
+				phase: "ready",
+				sending: false,
+				interrupting: false,
+				...busy,
+			});
+			render(
+				<StructuredAgentPanel
+					agent={agent}
+					profile={profile}
+					panelProps={panelProps}
+					launchSelection={launchSelection}
+					onRuntimeInvalidated={vi.fn()}
+					switchCredential={vi.fn()}
+					switchToNativeTerminal={vi.fn()}
+				/>,
+			);
+			expect(mocks.moveProps?.disabled).toBe(true);
+		});
 	});
 
 	it("registers the chat pane's status and exact interrupt handler as named pane actions", async () => {

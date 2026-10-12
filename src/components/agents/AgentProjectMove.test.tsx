@@ -200,3 +200,39 @@ it("keeps Retry usable after a local repair refusal", async () => {
 	expect(f.apply).not.toHaveBeenCalled();
 	expect(f.preview).not.toHaveBeenCalled();
 });
+
+it.each(["apply", "status", "repair"])(
+	"prepares a fresh move after confirmed %s without remounting the Chat pane",
+	async (completion) => {
+		if (completion !== "apply")
+			f.apply.mockRejectedValueOnce(new Error("response lost"));
+		f.status.mockResolvedValue(
+			completion === "repair" ? "repair_required" : "completed",
+		);
+		await preview();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.confirm") }),
+		);
+		if (completion !== "apply") {
+			await screen.findByText(t("agents.projectMove.unconfirmed"));
+			fireEvent.click(
+				screen.getByRole("button", { name: t("agents.projectMove.status") }),
+			);
+			if (completion === "repair")
+				fireEvent.click(
+					await screen.findByRole("button", {
+						name: t("agents.projectMove.repair"),
+					}),
+				);
+		}
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.title") }),
+		);
+		await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(2));
+		expect(screen.queryByText("/new")).toBeNull();
+		expect(
+			screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+		).toBeTruthy();
+	},
+);

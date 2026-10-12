@@ -288,8 +288,23 @@ function parseProjectionContext(
 	context: RuntimeProjectionContextV1,
 ): DureAgentRuntimeProjectionContextV1 {
 	if (!provider(context.agent.providerId)) throw contractError();
+	const movement = context.workspaceMove;
+	const structured = movement?.sourceStructuredBinding;
+	if (structured && structured.providerId !== context.agent.providerId)
+		throw contractError();
 	return {
 		...context,
+		workspaceMove: movement
+			? {
+					...movement,
+					sourceStructuredBinding: structured
+						? {
+								...structured,
+								providerId: context.agent.providerId,
+							}
+						: undefined,
+				}
+			: undefined,
 		agent: {
 			...context.agent,
 			providerId: context.agent.providerId as Provider,

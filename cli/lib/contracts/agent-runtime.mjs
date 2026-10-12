@@ -197,15 +197,22 @@ function validProjectionContext(context, agentId) {
     isDureDomainIdV1(agent.workspaceId) && workspace.workspaceId === agent.workspaceId &&
     isDureDomainIdV1(workspace.projectId) && project.projectId === workspace.projectId &&
     path(workspace.rootPath) && path(project.rootPath) &&
-    (context.workspaceMove === undefined || validWorkspaceMove(context.workspaceMove, agentId));
+    (context.workspaceMove === undefined || validWorkspaceMove(context.workspaceMove, agentId, agent.providerId));
 }
 
-function validWorkspaceMove(move, agentId) {
-  if (!record(move) || !record(move.sourceAuthority)) return false;
-  const authority = move.sourceAuthority;
-  return isDureDomainIdV1(move.operationId) &&
+function validWorkspaceMove(move, agentId, providerId) {
+  if (!record(move) || !(isDureDomainIdV1(move.operationId) &&
     Number.isSafeInteger(move.committedSelectionRevision) && move.committedSelectionRevision > 1 &&
-    typeof move.sourceRootPath === "string" && move.sourceRootPath.length > 0 &&
+    typeof move.sourceRootPath === "string" && move.sourceRootPath.length > 0)) return false;
+  const structured = move.sourceStructuredBinding;
+  if (structured !== undefined) {
+    return move.sourceAuthority === undefined && record(structured) &&
+      structured.agentId === agentId && structured.providerId === providerId &&
+      isDureDomainIdV1(structured.interactionSessionId) &&
+      typeof structured.providerConversationRef === "string" && structured.providerConversationRef.length > 0;
+  }
+  const authority = move.sourceAuthority;
+  return record(authority) &&
     ["runtimeWorkspaceId", "runnerPrincipal", "runnerInstance", "hostInstanceId", "terminalEpoch"]
       .every((key) => isDureDomainIdV1(authority[key])) &&
     typeof authority.channelEpoch === "string" && /^[1-9][0-9]*$/.test(authority.channelEpoch) &&

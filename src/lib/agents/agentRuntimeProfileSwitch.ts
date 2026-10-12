@@ -71,9 +71,23 @@ function matchesCommittedWorkspaceMove(
 	context: DureAgentRuntimeProjectionContextV1,
 ): boolean {
 	const move = context.workspaceMove;
+	if (!move || agent.worktreePath !== move.sourceRootPath) return false;
+	if (move.sourceStructuredBinding) {
+		const profile = agent.interactionProfile;
+		const source = move.sourceStructuredBinding;
+		return (
+			!move.sourceAuthority &&
+			!agent.runtimeBinding &&
+			profile?.kind === "structured_protocol" &&
+			profile.interactionSessionId === source.interactionSessionId &&
+			source.agentId === agent.id &&
+			source.providerId === agent.provider &&
+			source.providerConversationRef === agent.conversationId
+		);
+	}
 	const binding = agent.runtimeBinding;
-	if (!move || binding?.runtime !== "hmux_managed_v1") return false;
 	const source = move.sourceAuthority;
+	if (!source || binding?.runtime !== "hmux_managed_v1") return false;
 	return (
 		agent.worktreePath === move.sourceRootPath &&
 		source.binding.agentId === agent.id &&
@@ -472,6 +486,22 @@ export function projectRuntimeTransition(
 				projectionContext.workspaceMove!.committedSelectionRevision)
 	) {
 		throw new Error("client_agent_runtime_transition_conflict");
+	}
+	// At the move's commit revision the interaction itself must be retained.
+	// Later explicit mode changes still reconcile through the same projector.
+	const committedMove = projectionContext.workspaceMove;
+	if (
+		moving && committedMove && "selectionRevision" in transition &&
+		transition.selectionRevision === committedMove.committedSelectionRevision
+	) {
+		const structured = committedMove.sourceStructuredBinding;
+		if (structured ? (
+			transition.interactionProfile !== "structured_protocol" ||
+			transition.interactionSessionId !== structured.interactionSessionId ||
+			transition.providerConversationRef !== structured.providerConversationRef
+		) : transition.interactionProfile !== "native_cli") {
+			throw new Error("client_agent_runtime_transition_conflict");
+		}
 	}
 	const existingRoute = agentRuntimeTransitionBackendProfileId(
 		agent,

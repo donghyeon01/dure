@@ -370,5 +370,5 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.status": "상태 확인",
 	"agents.projectMove.repair": "기존 폴더에서 재개",
 	"agents.projectMove.versionRequired":
-		"안전하게 이동할 수 있는 버전을 확인하지 못했습니다. 현재 Claude 이동은 Claude Code 2.1.223–2.1.284에서 지원됩니다. 이후 버전은 원래 폴더의 백그라운드 세션에 연결될 수 있습니다.",
+		"안전하게 이동할 수 있는 버전을 확인하지 못했습니다. 현재 Claude Terminal 모드 이동은 Claude Code 2.1.223–2.1.284에서 지원됩니다. 이후 버전은 원래 폴더의 백그라운드 세션에 연결될 수 있습니다.",
 };

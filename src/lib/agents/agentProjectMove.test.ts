@@ -94,12 +94,15 @@ const plan = () => ({
 });
 const committed = () => ({
 	state: "stable",
+	agentId: "agent-1",
+	providerId: "codex",
+	interactionProfile: "native_cli",
 	routeAuthority: authority,
 	providerConversationRef: "conversation-1",
 	selectionRevision: 8,
 	projectionContext: {
 		workspaceMove: { operationId: "move-1" },
-		workspace: { workspaceId: "workspace-2", rootPath: "/new" },
+		workspace: { workspaceId: "workspace-2", projectId: "new", rootPath: "/new" },
 	},
 });
 
@@ -330,3 +333,93 @@ it("preserves a credential request that arrives while repair inspection awaits",
 	expect(f.transition).not.toHaveBeenCalled();
 	expect(f.agent.pendingCredentialSwitch).toEqual({ requestId: "queued" });
 });
+
+it("repairs a Chat move through the shared runtime owner without changing mode", async () => {
+	const move = await prepareAgentProjectMove("agent-1");
+	f.inspect.mockResolvedValue({
+		state: "repair_required",
+		routeAuthority: authority,
+		operationId: "move-1",
+	});
+	await move.repair({
+		...plan(),
+		targetInteractionProfile: "structured_protocol",
+	});
+	expect(f.transition).toHaveBeenCalledWith(
+		expect.objectContaining({
+			targetInteractionProfile: "structured_protocol",
+			expectedOperationId: "move-1",
+			expectedSourceRevision: 7,
+		}),
+	);
+});
+it.each([
+	{ providerId: "claude" },
+	{ interactionProfile: "structured_protocol" },
+	{ agentId: "another-agent" },
+	{
+		projectionContext: {
+			...committed().projectionContext,
+			workspace: {
+				workspaceId: "workspace-2",
+				projectId: "old",
+				rootPath: "/new",
+			},
+		},
+	},
+	{
+		projectionContext: {
+			...committed().projectionContext,
+			workspace: {
+				workspaceId: "workspace-2",
+				projectId: "new",
+				rootPath: "/old",
+			},
+		},
+	},
+])(
+	"does not project an unrelated stable destination: %j",
+	async (replacement) => {
+		const move = await prepareAgentProjectMove("agent-1");
+		f.inspect.mockResolvedValue({ ...committed(), ...replacement });
+		expect(await move.status(plan())).toBe("unconfirmed");
+		expect(f.project).not.toHaveBeenCalled();
+	},
+);
+
+it.each(["codex", "claude"] as const)(
+	"projects a confirmed %s Chat move while retaining the source interaction",
+	async (providerId) => {
+		const reviewed = {
+			...plan(),
+			source: {
+				...plan().source,
+				providerId,
+				interactionProfile: "structured_protocol" as const,
+			},
+			targetInteractionProfile: "structured_protocol" as const,
+			sourceAuthority: {
+				interactionProfile: "structured_protocol" as const,
+				binding: { interactionSessionId: "interaction-1" },
+			},
+		};
+		const result = {
+			...committed(),
+			providerId,
+			interactionProfile: "structured_protocol",
+			interactionSessionId: "interaction-1",
+		};
+		f.preview.mockResolvedValue(reviewed);
+		f.inspect.mockResolvedValue(result);
+		const move = await prepareAgentProjectMove("agent-1");
+		await move.apply(await move.preview("new"));
+		expect(f.project).toHaveBeenLastCalledWith("agent-1", result);
+		f.project.mockClear();
+		f.inspect.mockResolvedValue({
+			...result,
+			interactionSessionId: "different-interaction",
+		});
+		expect(await move.status(reviewed)).toBe("unconfirmed");
+		expect(f.project).not.toHaveBeenCalled();
+	},
+);

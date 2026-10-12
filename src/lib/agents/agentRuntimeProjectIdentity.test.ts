@@ -25,6 +25,7 @@ vi.mock("@/lib/sessions/managed/managedAgentRehostConvergence", () => ({
 	convergeManagedAgentRehost: async () => null,
 }));
 
+import { agentChatDraftKey } from "@/lib/agents/chat/agentChatDraftStoreSlice";
 import { requestAgentCredentialTransition } from "@/lib/agents/agentCredentialTransition";
 import {
 	projectRuntimeTransition,
@@ -189,12 +190,15 @@ describe("runtime actions with separate IDE and backend project identities", () 
 				workspaceId: sourceWorkspaceId,
 				projectionContext: bootstrapContext,
 			});
-			mocks.transition.mockResolvedValue({ ...target, providerId: provider });
+			const providerTarget = { ...target, providerId: provider, projectionContext: {
+        ...target.projectionContext, agent: { ...target.projectionContext.agent, providerId: provider },
+      } };
+      mocks.transition.mockResolvedValue(providerTarget);
 
 			await expect(switchAccount()).resolves.toEqual({
 				kind: "completed",
 				conversationId: "conversation-1",
-				runtime: { ...target, providerId: provider },
+				runtime: providerTarget,
 			});
 			expect(mocks.transition).toHaveBeenCalledExactlyOnceWith(
 				expect.objectContaining({
@@ -454,6 +458,120 @@ describe("committed project moves through the shared pane projector", () => {
 				projectAgentRuntimeTransition(agent.id, transition),
 			).toThrow();
 			expect(useStore.getState().agents[0]).toEqual(agent);
+		},
+	);
+});
+
+describe("structured project moves preserve the existing composer", () => {
+	const destination = {
+		...project,
+		id: "ide-destination",
+		path: "/destination",
+	};
+	const profile = {
+		schemaVersion: 1 as const,
+		kind: "structured_protocol" as const,
+		backendProfileId: "local",
+		interactionSessionId: "interaction-1",
+	};
+	const chatAgent = {
+		...agent,
+		runtimeBinding: undefined,
+		interactionProfile: profile,
+	};
+	const moved = () => ({
+		...target,
+		interactionProfile: "structured_protocol" as const,
+		interactionSessionId: profile.interactionSessionId,
+		projectionContext: {
+			...projectionContext,
+			agent: { ...projectionContext.agent, workspaceId: "move-operation-1" },
+			project: { projectId: "backend-destination", rootPath: destination.path },
+			workspace: {
+				workspaceId: "move-operation-1",
+				projectId: "backend-destination",
+				rootPath: destination.path,
+			},
+			workspaceMove: {
+				operationId: "operation-1",
+				committedSelectionRevision: target.selectionRevision,
+				sourceRootPath: chatAgent.worktreePath,
+				sourceStructuredBinding: {
+					agentId: chatAgent.id,
+					providerId: chatAgent.provider,
+					interactionSessionId: profile.interactionSessionId,
+					providerConversationRef: chatAgent.conversationId!,
+				},
+			},
+		},
+	});
+	it("projects the committed folder without replacing or copying a late text/attachment draft", () => {
+		useStore.setState({
+			agents: [chatAgent],
+			projects: [project, destination],
+			chatDrafts: {},
+			chatDraftMoves: {},
+		});
+		const identity = { agentId: chatAgent.id, ...profile };
+		const key = agentChatDraftKey(identity);
+		const transition = moved();
+		// Composition can change after preview. The existing store remains its owner.
+		useStore
+			.getState()
+			.updateChatDraft(identity, () => ({
+				text: "unsent after preview",
+				attachments: [{ fileName: "note.txt", dataB64: "aGVsbG8=" }],
+			}));
+		const drafts = useStore.getState().chatDrafts;
+		projectAgentRuntimeTransition(chatAgent.id, transition);
+		expect(useStore.getState().agents[0]).toMatchObject({
+			projectId: destination.id,
+			worktreePath: destination.path,
+			conversationId: chatAgent.conversationId,
+			interactionProfile: profile,
+		});
+		expect(useStore.getState().chatDrafts).toBe(drafts);
+		const projected = useStore.getState().agents[0];
+		expect(
+			agentChatDraftKey({
+				agentId: projected.id,
+				...projected.interactionProfile!,
+			}),
+		).toBe(key);
+		expect(drafts[chatAgent.id][key]).toMatchObject({
+			text: "unsent after preview",
+			attachments: [{ fileName: "note.txt" }],
+		});
+		projectAgentRuntimeTransition(chatAgent.id, transition);
+		expect(useStore.getState().chatDrafts).toBe(drafts);
+	});
+	it.each(["conversation", "binding", "provider", "revision", "host", "target-binding", "target-mode", "target-conversation"])(
+		"rejects mismatched %s before changing the pane",
+		(boundary) => {
+			useStore.setState({
+				agents: [chatAgent],
+				projects: [project, destination],
+			});
+			const transition = moved();
+			const proof =
+				transition.projectionContext.workspaceMove.sourceStructuredBinding;
+			if (boundary === "target-binding") transition.interactionSessionId = "other";
+			if (boundary === "target-mode") Reflect.set(transition, "interactionProfile", "native_cli");
+			if (boundary === "target-conversation") transition.providerConversationRef = "other";
+			if (boundary === "conversation") proof.providerConversationRef = "other";
+			if (boundary === "binding") proof.interactionSessionId = "other";
+			if (boundary === "provider") proof.providerId = "claude";
+			if (boundary === "revision") transition.selectionRevision = 1;
+			if (boundary === "host")
+				transition.routeAuthority = testDureBackendRouteAuthority(
+					"other",
+					"other",
+					"other",
+				);
+			expect(() =>
+				projectAgentRuntimeTransition(chatAgent.id, transition),
+			).toThrow();
+			expect(useStore.getState().agents[0]).toEqual(chatAgent);
 		},
 	);
 });

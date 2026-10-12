@@ -8,8 +8,8 @@ export function assertNoConversationProjectOptions(opts) {
   throw Object.assign(new Error(
     "Resume keeps its original workspace and does not accept destination options. No restart was requested. " +
     "To keep this conversation, resume it without --project, --path or --cwd. " +
-    "To move an idle or stopped native Claude or Codex conversation on the same backend, " +
+    "To move an idle or stopped Claude or Codex conversation on the same backend, " +
     "preview with dure runs move AGENT --project PROJECT --json and use its exact Apply command. " +
-    "Claude requires CLI 2.1.223–2.1.284 and exact history; structured project moves remain unsupported. Use dure run --project PROJECT for a new conversation.",
+    "Claude Terminal moves require CLI 2.1.223–2.1.284 and exact history. Chat and Terminal moves preserve their mode. Use dure run --project PROJECT for a new conversation.",
   ), { code: "conversation_project_move_unsupported" });
 }

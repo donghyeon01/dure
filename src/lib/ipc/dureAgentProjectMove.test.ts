@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAgentProjectMoveClient } from "@/lib/ipc/dureAgentProjectMove";
-import { agentRuntimeBackendEnvelope } from "@/test/dureAgentRuntimeFixtures";
+import { createDureAgentRuntimeClient } from "@/lib/ipc/dureAgentRuntime";
+import { agentRuntimeBackendEnvelope, agentRuntimeProjectionContext } from "@/test/dureAgentRuntimeFixtures";
 
 function fixture() {
 	const envelope = agentRuntimeBackendEnvelope();
@@ -58,7 +59,7 @@ describe("project move transport", () => {
 					providerId: "codex",
 					selectionRevision: 8,
 					providerConversationRef: "conversation-1",
-					authority: { authority: { runtimeWorkspaceId: "workspace-2" } },
+					authority: { interactionProfile: "native_cli", authority: { runtimeWorkspaceId: "workspace-2" } },
 				},
 			},
 		});
@@ -84,4 +85,99 @@ describe("project move transport", () => {
 		).rejects.toThrow("response_invalid");
 		expect(f.invokeCommand).toHaveBeenCalledOnce();
 	});
+});
+
+it("uses the shared structured move receipt and decodes its committed project proof", async () => {
+	const f = fixture();
+	const binding = f.envelope.result.receipt.authority.binding;
+	const reviewed = {
+		...f.plan,
+		targetInteractionProfile: "structured_protocol",
+		source: {
+			...f.plan.source,
+			providerId: "claude",
+			interactionProfile: "structured_protocol",
+		},
+		sourceAuthority: { interactionProfile: "structured_protocol", binding },
+	};
+	f.invokeCommand.mockResolvedValue({
+		...f.envelope,
+		result: {
+			schemaVersion: 1,
+			plan: reviewed,
+			requiresRestartConfirmation: true,
+		},
+	});
+	const plan = await f.client.preview(
+		"agent-1",
+		"new",
+		f.envelope.routeAuthority,
+	);
+	const receipt = {
+		...f.envelope.result.receipt,
+		selectionRevision: 8,
+		transitionLineage: { operationId: "move-1" },
+	};
+	f.invokeCommand.mockResolvedValue({
+		...f.envelope,
+		result: {
+			schemaVersion: 1,
+			receipt,
+			workspace: reviewed.workspaceMove.targetWorkspace,
+		},
+	});
+	await f.client.apply(plan, f.envelope.routeAuthority);
+	const context = agentRuntimeProjectionContext();
+	const projectionContext = {
+		...context,
+		agent: { ...context.agent, workspaceId: "workspace-2" },
+		project: { projectId: "new", rootPath: "/new" },
+		workspace: reviewed.workspaceMove.targetWorkspace,
+		workspaceMove: {
+			operationId: "move-1",
+			committedSelectionRevision: 8,
+			sourceRootPath: "/old",
+			sourceStructuredBinding: binding,
+		},
+	};
+	f.invokeCommand.mockResolvedValue({
+		...f.envelope,
+		result: { schemaVersion: 1, state: "stable", receipt, projectionContext },
+	});
+	const runtime = createDureAgentRuntimeClient({
+		profileId: f.envelope.routeAuthority.profileId,
+		invokeCommand: f.invokeCommand,
+	});
+	await expect(
+		runtime.inspectExact("agent-1", f.envelope.routeAuthority),
+	).resolves.toMatchObject({
+		state: "stable",
+		interactionProfile: "structured_protocol",
+		interactionSessionId: binding.interactionSessionId,
+		projectionContext: {
+			workspace: reviewed.workspaceMove.targetWorkspace,
+			workspaceMove: {
+				operationId: "move-1",
+				sourceStructuredBinding: binding,
+			},
+		},
+	});
+	f.invokeCommand.mockResolvedValue({
+		...f.envelope,
+		result: {
+			schemaVersion: 1,
+			state: "stable",
+			receipt,
+			projectionContext: {
+				...projectionContext,
+				workspaceMove: {
+					...projectionContext.workspaceMove,
+					sourceStructuredBinding: { ...binding, providerId: "codex" },
+				},
+			},
+		},
+	});
+	await expect(
+		runtime.inspectExact("agent-1", f.envelope.routeAuthority),
+	).rejects.toThrow();
 });

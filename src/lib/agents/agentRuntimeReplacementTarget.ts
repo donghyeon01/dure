@@ -212,6 +212,9 @@ export function agentRuntimeWorkspaceRepairMatches(
 		result.agentId === plan.source.agentId &&
 		result.providerId === plan.source.providerId &&
 		result.interactionProfile === plan.targetInteractionProfile &&
+		(result.interactionProfile !== "structured_protocol" ||
+			result.interactionSessionId ===
+				plan.sourceAuthority?.binding?.interactionSessionId) &&
 		result.providerConversationRef === plan.providerConversationRef &&
 		result.selectionRevision === plan.source.revision + 1 &&
 		result.transitionLineage?.predecessorOperationId === plan.operationId &&

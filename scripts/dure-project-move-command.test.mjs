@@ -7,35 +7,40 @@ import { describe, it, expect, vi } from "vitest";
 import { collectAgentProjectMove, formatAgentProjectMove } from "../cli/lib/agent-project-move-command.mjs";
 import { collectRunsCommand, parseRunsOptions } from "../cli/lib/runs-command.mjs";
 import { collectAgentRuntimeCommand, RUNTIME_HELP } from "../cli/lib/agent-runtime-command.mjs";
-import { nativeRuntimeReceipt } from "../src/test/dureAgentRuntimeFixtures.ts";
+import { agentRuntimeBackendEnvelope, nativeRuntimeReceipt } from "../src/test/dureAgentRuntimeFixtures.ts";
 import { installRemoteBackendFixture } from "./lib/dure-cli-ssh-fixture.mjs";
 import { assertNoConversationProjectOptions } from "../cli/lib/conversation-project-options.mjs";
 
-function fixture() {
+function fixture(profile = "native_cli") {
   const plan = { schemaVersion: 1, operationId: "move-1", idempotencyKey: "request-1",
-    source: { agentId: "agent-1", providerId: "codex", revision: 7 }, targetInteractionProfile: "native_cli",
-    providerConversationRef: "conversation-1", workspaceMove: {
+    source: { agentId: "agent-1", providerId: "codex", interactionProfile: profile, revision: 7 }, targetInteractionProfile: profile,
+    providerConversationRef: "conversation-1", sourceAuthority: { interactionProfile: profile, binding: { agentId: "agent-1", providerId: "codex", providerConversationRef: "conversation-1", interactionSessionId: "interaction-1" } }, workspaceMove: {
       sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { workspaceId: "workspace-1", projectId: "old", rootPath: "/old" },
       targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "new-workspace", rootPath: "/new" } } };
   const backend = { profile: { id: "remote-owner", transport: { kind: "ssh" } } };
   const requestBackend = vi.fn(async (_, request) => ({ result: request.operation.endsWith("preview.v1")
     ? { schemaVersion: 1, plan, requiresRestartConfirmation: true }
     : { schemaVersion: 1, receipt: { agentId: "agent-1", providerId: "codex", selectionRevision: 8, providerConversationRef: "conversation-1",
-      authority: { authority: { runtimeWorkspaceId: "new-workspace" } } } } }));
+      authority: { interactionProfile: "native_cli", authority: { runtimeWorkspaceId: "new-workspace" } } } } }));
   return { agentId: "agent-1", projectId: "new", backend, requestBackend, plan };
 }
 
 describe("conversation project move command", () => {
-  it("executes the generated repair command through the CLI with its source revision and unchanged credentials", async () => {
-    const f = fixture();
+  it.each(["native_cli", "structured_protocol"])("executes the %s repair command through the CLI with its source revision and unchanged credentials", async (profile) => {
+    const f = fixture(profile);
     f.backend.profile.id = "remote-build";
     const preview = await collectAgentProjectMove(f);
     const root = mkdtempSync(join(tmpdir(), "dure-project-move-repair."));
     try {
+      const retained = { kind: "credential_reference", reference_id: "retained-account", credential_generation: "generation-1" };
+      const repair = profile === "native_cli" ? nativeRuntimeReceipt(retained, 8, "repair-1")
+        : agentRuntimeBackendEnvelope().result.receipt;
+      Object.assign(repair, { providerId: "codex", selectionRevision: 8, executionProfile: retained });
+      if (profile === "structured_protocol") Object.assign(repair.authority.binding, { providerId: "codex", executionProfile: retained });
       const remote = installRemoteBackendFixture(root, [], {
         capabilities: ["agent_runtime.transition"],
         results: { "agent_runtime.transition": { schemaVersion: 1,
-          receipt: { ...nativeRuntimeReceipt({ kind: "credential_reference", reference_id: "retained-account", credential_generation: "generation-1" }, 8, "repair-1"), providerId: "codex",
+          receipt: { ...repair,
             transitionLineage: { operationId: "repair-1", predecessorOperationId: "move-1" } } } },
       });
       const run = spawnSync(process.execPath, [fileURLToPath(new URL("../cli/dure.mjs", import.meta.url)),
@@ -55,7 +60,7 @@ describe("conversation project move command", () => {
       const requests = readFileSync(remote.requestLog, "utf8").trim().split("\n").map(JSON.parse);
       const transition = requests.find((request) => request.operation === "agent_runtime.transition");
       expect(transition).toMatchObject({ requestId: "rollback-request-1", body: {
-        schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: "native_cli", expectedSourceRevision: 7, expectedOperationId: "move-1",
+        schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: profile, expectedSourceRevision: 7, expectedOperationId: "move-1",
       } });
       expect(transition.body).not.toHaveProperty("targetExecutionProfile");
     } finally {

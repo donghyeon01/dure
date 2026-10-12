@@ -4,12 +4,12 @@ import { isAgentProjectMovePlan, isAgentProjectMoveReceipt } from "../cli/lib/co
 import { collectAgentProjectMove } from "../cli/lib/agent-project-move-command.mjs";
 
 const plan = () => ({ schemaVersion: 1, operationId: "move-1", idempotencyKey: "request-1",
-  source: { agentId: "agent-1", providerId: "codex", revision: 7 }, targetInteractionProfile: "native_cli",
+  source: { agentId: "agent-1", providerId: "codex", interactionProfile: "native_cli", revision: 7 }, targetInteractionProfile: "native_cli",
   providerConversationRef: "conversation-1", sourceStopPolicy: { preserve_observed: { runtimeRevision: 3, observedThroughOutputSeq: 9 } },
   workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { workspaceId: "workspace-1", projectId: "old", rootPath: "/old" },
     targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "new-workspace", rootPath: "/new" } } });
 const receipt = () => ({ schemaVersion: 1, receipt: { agentId: "agent-1", providerId: "codex", selectionRevision: 8,
-  providerConversationRef: "conversation-1", authority: { authority: { runtimeWorkspaceId: "new-workspace" } } } });
+  providerConversationRef: "conversation-1", authority: { interactionProfile: "native_cli", authority: { runtimeWorkspaceId: "new-workspace" } } } });
 
 test("shared clients refuse destructive or malformed idle stop plans", () => {
   assert(isAgentProjectMovePlan(plan(), "agent-1", "new"));
@@ -45,3 +45,30 @@ test("lost apply response retains the exact preview and idle observation for ret
   assert.equal(retried.state, "completed");
   assert.deepEqual(calls[2], calls[1]);
 });
+
+for (const providerId of ["codex", "claude"]) {
+  test(`${providerId} structured move keeps its mode and requires committed destination evidence`, () => {
+    const reviewed = plan();
+    Object.assign(reviewed.source, { providerId, interactionProfile: "structured_protocol" });
+    reviewed.targetInteractionProfile = "structured_protocol";
+    reviewed.sourceAuthority = { interactionProfile: "structured_protocol", binding: { agentId: "agent-1", providerId, providerConversationRef: "conversation-1", interactionSessionId: "interaction-1" } };
+    assert(isAgentProjectMovePlan(reviewed, "agent-1", "new"));
+    const committed = { schemaVersion: 1, workspace: { ...reviewed.workspaceMove.targetWorkspace },
+      receipt: { ...receipt().receipt, providerId, authority: { interactionProfile: "structured_protocol", binding: { agentId: "agent-1", providerId, providerConversationRef: "conversation-1", interactionSessionId: "interaction-1" } },
+        transitionLineage: { operationId: reviewed.operationId } } };
+    assert(isAgentProjectMoveReceipt(committed, reviewed));
+    for (const workspace of [undefined, {}, { ...committed.workspace, workspaceId: "wrong" },
+      { ...committed.workspace, projectId: "old" }, { ...committed.workspace, rootPath: "/old" }]) {
+      assert.equal(isAgentProjectMoveReceipt({ ...committed, workspace }, reviewed), false);
+    }
+    for (const replacement of [{ transitionLineage: undefined }, { transitionLineage: { operationId: "another-move" } },
+      { authority: { interactionProfile: "native_cli", authority: { runtimeWorkspaceId: "new-workspace" } } },
+      { authority: { interactionProfile: "structured_protocol", binding: { interactionSessionId: "new-interaction" } } },
+      { providerId: "wrong" }, { providerConversationRef: "other" }, { selectionRevision: 7 }]) {
+      assert.equal(isAgentProjectMoveReceipt({ ...committed, receipt: { ...committed.receipt, ...replacement } }, reviewed), false);
+    }
+    for (const interactionProfile of [undefined, "native_cli"]) {
+      assert.equal(isAgentProjectMovePlan({ ...reviewed, source: { ...reviewed.source, interactionProfile } }, "agent-1", "new"), false);
+    }
+  });
+}

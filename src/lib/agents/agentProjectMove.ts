@@ -111,12 +111,22 @@ export async function prepareAgentProjectMove(agentId: string) {
 		observed: DureAgentRuntimeProjectionInspectResultV1,
 	) =>
 		observed.state === "stable" &&
+		observed.agentId === plan.source.agentId &&
+		observed.providerId === plan.source.providerId &&
+		observed.interactionProfile === plan.targetInteractionProfile &&
+		(observed.interactionProfile !== "structured_protocol" ||
+			observed.interactionSessionId ===
+				plan.sourceAuthority?.binding?.interactionSessionId) &&
 		observed.providerConversationRef === plan.providerConversationRef &&
 		observed.selectionRevision === plan.source.revision + 1 &&
 		observed.projectionContext?.workspaceMove?.operationId ===
 			plan.operationId &&
 		observed.projectionContext.workspace.workspaceId ===
-			plan.workspaceMove.targetWorkspace.workspaceId;
+			plan.workspaceMove.targetWorkspace.workspaceId &&
+		observed.projectionContext.workspace.projectId ===
+			plan.workspaceMove.targetWorkspace.projectId &&
+		observed.projectionContext.workspace.rootPath ===
+			plan.workspaceMove.targetWorkspace.rootPath;
 	const observeCompleted = async (plan: AgentProjectMovePlan) => {
 		const observed = await inspect();
 		if (!isCompleted(plan, observed) || observed.state !== "stable")
@@ -182,7 +192,7 @@ export async function prepareAgentProjectMove(agentId: string) {
 			preDispatch();
 			await transitionAgentRuntime({
 				agentId,
-				targetInteractionProfile: "native_cli",
+				targetInteractionProfile: plan.targetInteractionProfile,
 				expectedSourceRevision: plan.source.revision,
 				expectedConversationId: plan.providerConversationRef,
 				expectedOperationId: plan.operationId,

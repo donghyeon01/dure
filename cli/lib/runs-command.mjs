@@ -31,12 +31,12 @@ for a deferred target uses backend wake; an existing native source uses native
 rehost. Both preserve the conversation without an open app. Remote resume is not
 supported here.
 Resume retains the original project and working folder, and refuses --project,
---path and --cwd. Use runs move for an idle or stopped native Claude or Codex
+--path and --cwd. Use runs move for an idle or stopped Claude or Codex
 conversation on the same backend. Move previews first and returns an exact Apply
 command requiring --confirm-restart. Live sources require the exact observed idle
-revision and output position; new activity invalidates the preview. Claude requires
+revision and output position; new activity invalidates the preview. Claude Terminal moves require
 CLI 2.1.223–2.1.284 and unambiguous exact history. Original checkout claims are retained.
-Structured Chat and unobservable sources remain unsupported.
+Chat and Terminal moves preserve their mode. Unobservable sources remain unsupported.
 No project files are copied or deleted. The selected backend owns both projects.
 A retained record alone cannot recover a source whose conversation or native
 recovery metadata is unavailable after reboot.

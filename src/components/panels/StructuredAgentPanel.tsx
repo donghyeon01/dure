@@ -6,6 +6,7 @@ import {
 	AgentConversationHistoryControl,
 } from "@/components/agents/AgentConversationHistoryControl";
 import { AgentCredentialSwitcher } from "@/components/agents/AgentCredentialSwitcher";
+import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
 import { AgentRuntimeProfileSwitch } from "@/components/agents/AgentRuntimeProfileSwitch";
 import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
@@ -139,6 +140,8 @@ export function StructuredAgentPanel({
 		useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
 	const [ownedProfileBusy, setProfileBusy] =
 		useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
+	const [ownedProjectMoveBusy, setProjectMoveBusy] =
+		useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
 	const [conversationFailure, setConversationFailure] =
 		useRuntimeOwnedValue<string>(runtimeOwnerKey);
 	const [ownedConversations, setConversations] = useRuntimeOwnedValue<
@@ -148,6 +151,8 @@ export function StructuredAgentPanel({
 	const conversations = ownedConversations ?? null;
 	const accountBusy = ownedAccountBusy ?? false;
 	const profileBusy = ownedProfileBusy ?? false;
+	const projectMoveBusy = ownedProjectMoveBusy ?? false;
+	const chatInputLocked = accountBusy || profileBusy || projectMoveBusy;
 	const paneId = panelProps.api.id;
 	const paneDesktopId = useWorkspaceRuntimeDesktopId();
 	useAgentPaneAttentionAck(agent.id, panelProps.api);
@@ -243,11 +248,13 @@ export function StructuredAgentPanel({
 	// discarded; an active turn must never remove the user's terminal escape.
 	const runtimeProfileSwitchBusy =
 		chatMutationBusy || launchSelection.switching;
+	const runtimeSwitchLocked =
+		chatInputLocked || remoteAccountBusy || runtimeProfileSwitchBusy;
 	useNamedPaneAction(
 		paneId,
 		"switch_runtime:terminal",
 		supportsStructuredChat(agent.provider) &&
-			!(accountBusy || remoteAccountBusy || runtimeProfileSwitchBusy),
+			!runtimeSwitchLocked,
 		() =>
 			runAgentRuntimePaneAction((sourceStopPolicy, expectedSourceRevision) =>
 				switchToNativeTerminal(
@@ -311,7 +318,7 @@ export function StructuredAgentPanel({
 	// The toolbar switcher's own disabled predicate; the pane actions and the
 	// automatic handoff honour exactly the same lock.
 	const accountMovesLocked =
-		accountBusy || remoteAccountBusy || profileBusy || structuredActionBusy;
+		chatInputLocked || remoteAccountBusy || structuredActionBusy;
 	const { view: handoffView, requestHandoff } = useUsageLimitHandoff({
 		agentId: agent.id,
 		provider: agent.provider,
@@ -363,7 +370,7 @@ export function StructuredAgentPanel({
 			activeTurn,
 			interrupting: session.interrupting,
 			// Same lock the chat surface passes as `disabled`.
-			locked: accountBusy || profileBusy,
+			locked: chatInputLocked,
 			accountMovesLocked,
 			error:
 				handoffView.kind === "failed"
@@ -432,12 +439,7 @@ export function StructuredAgentPanel({
 							hostName={remoteHost?.name}
 							accountBusy={accountBusy || remoteAccountBusy}
 							allowCurrentAccountReselect={session.phase !== "ready"}
-							disabled={
-								accountBusy ||
-								remoteAccountBusy ||
-								profileBusy ||
-								structuredActionBusy
-							}
+							disabled={accountMovesLocked}
 							disabledTitle={t("common.paneAccount")}
 							onSwitch={runAccountSwitch}
 							onApplyNow={() => {}}
@@ -454,9 +456,7 @@ export function StructuredAgentPanel({
 						<AgentRuntimeProfileSwitch
 							key={`runtime-profile:${runtimeOwnerKey}`}
 							target="terminal"
-							disabled={
-								accountBusy || remoteAccountBusy || runtimeProfileSwitchBusy
-							}
+							disabled={runtimeSwitchLocked}
 							disabledTitle={
 								runtimeProfileSwitchBusy ? t("common.loading") : undefined
 							}
@@ -468,6 +468,19 @@ export function StructuredAgentPanel({
 								)
 							}
 							onSwitchingChange={setProfileBusy}
+						/>,
+					)}
+				{supportsStructuredChat(agent.provider) &&
+					toolbarControls.visible("project-move") &&
+					toolbarControls.slot(
+						"project-move",
+						<AgentProjectMove
+							key={`project-move:${runtimeOwnerKey}`}
+							agentId={agent.id}
+							disabled={
+								accountMovesLocked || !!agent.pendingCmd || !!agent.pendingCredentialSwitch
+							}
+							onBusyChange={setProjectMoveBusy}
 						/>,
 					)}
 				<AgentPanelWindowActions
@@ -499,9 +512,7 @@ export function StructuredAgentPanel({
 							paneDesktopId={paneDesktopId}
 							panelId={paneId}
 							projectKind={project?.kind}
-							resuming={
-								accountBusy || remoteAccountBusy || structuredActionBusy
-							}
+							resuming={accountMovesLocked}
 						/>,
 					)}
 			</AgentPanelToolbarFrame>
@@ -509,7 +520,7 @@ export function StructuredAgentPanel({
 				<StructuredAgentChatSurface
 					session={session}
 					paneApi={panelProps.api}
-					disabled={accountBusy || profileBusy}
+					disabled={chatInputLocked}
 					attachmentsEnabled={project?.kind === "local"}
 					launchSelection={launchSelection}
 					catalogSource={agentProviderCatalogSource(agent, project, accounts)}

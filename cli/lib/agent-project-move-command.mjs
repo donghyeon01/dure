@@ -30,7 +30,7 @@ export async function collectAgentProjectMove({ agentId, projectId, movePlan, co
     const encoded = Buffer.from(JSON.stringify({ backendId: backend.profile.id, plan })).toString("base64url");
     const apply = ["runs", "move", agentId, "--project", projectId, "--move-plan", encoded, "--confirm-restart", "--backend", backend.profile.id, "--json"];
     prepared = { ...base, ok: true, state: "preview", plan, continuation: {
-      apply, retry: [...apply], rollback: ["runtime", "switch", agentId, "terminal", "--expected-revision", String(plan.source.revision),
+      apply, retry: [...apply], rollback: ["runtime", "switch", agentId, plan.targetInteractionProfile === "structured_protocol" ? "chat" : "terminal", "--expected-revision", String(plan.source.revision),
         "--expected-operation-id", plan.operationId,
         "--idempotency-key", `rollback-${plan.idempotencyKey}`, "--backend", backend.profile.id, "--json"], status: ["runtime", "get", agentId, "--backend", backend.profile.id, "--json"],
     } };
