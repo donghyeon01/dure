@@ -9,6 +9,7 @@ pub(crate) fn local_create_time_recipe(
     permission_mode: PermissionMode,
     launch_reference: Option<String>,
     shell: &Path,
+    cwd: &Path,
     provider_state_environment: &ProviderStateEnvironment,
     path_supplement: Option<&str>,
 ) -> Result<Option<ManagedRehostRecipe>, String> {
@@ -23,6 +24,7 @@ pub(crate) fn local_create_time_recipe(
         provider_id,
         &command,
         provider_state_environment,
+        cwd,
         path_supplement,
     )?
     .into_command_template(shell);

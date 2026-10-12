@@ -400,6 +400,29 @@ where
             .validate()
             .map_err(|_| ClaudeConversationHostErrorV1::new("binding_invalid"))?;
         let cwd = exact_directory(&attachment.cwd)?;
+        let memory_directory = if let Some(config) = attachment.environment.get("CLAUDE_CONFIG_DIR")
+        {
+            let home = attachment
+                .environment
+                .get("HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                .ok_or_else(|| ClaudeConversationHostErrorV1::new("memory_unavailable"))?;
+            let config = PathBuf::from(config);
+            let memory_cwd = cwd.clone();
+            tokio::task::spawn_blocking(move || {
+                dure_provider_profile::claude_memory::prepare_directory(
+                    &home,
+                    Some(&config),
+                    &memory_cwd,
+                )
+            })
+            .await
+            .map_err(|_| ClaudeConversationHostErrorV1::new("memory_unavailable"))?
+            .map_err(|_| ClaudeConversationHostErrorV1::new("memory_unavailable"))?
+        } else {
+            None
+        };
         let identity = ClaudeDch1QueryIdentity {
             runtime_generation: attachment.binding.runtime.runtime_generation.clone(),
             query_epoch: attachment.binding.runtime.provider_epoch.clone(),
@@ -494,6 +517,9 @@ where
         let mut query_binding = Map::new();
         query_binding.insert("identity".into(), json!(identity));
         query_binding.insert("cwd".into(), json!(cwd));
+        if let Some(directory) = memory_directory {
+            query_binding.insert("autoMemoryDirectory".into(), json!(directory));
+        }
         let mut environment = attachment.environment;
         if let Some(home) = self.service.backend_home() {
             environment.insert(

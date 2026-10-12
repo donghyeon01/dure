@@ -5,6 +5,7 @@
 //! Reviewed state is projected from the canonical provider home while auth
 //! remains private to each profile. See the credential-only switching design.
 
+pub mod claude_memory;
 mod claude_shared_state;
 
 /// Read Claude's existing project trust using the same bounded, owned-file

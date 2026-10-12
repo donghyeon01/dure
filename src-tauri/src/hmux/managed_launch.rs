@@ -71,6 +71,7 @@ pub(super) fn prepare_managed_create_request(
         &provider_id,
         &command,
         &provider_state_environment,
+        &cwd,
         path_supplement.as_deref(),
     )?;
     let shell = std::env::var_os("SHELL")
@@ -82,6 +83,7 @@ pub(super) fn prepare_managed_create_request(
         permission_mode,
         credential_id.clone(),
         &shell,
+        &cwd,
         &provider_state_environment,
         path_supplement.as_deref(),
     )?;

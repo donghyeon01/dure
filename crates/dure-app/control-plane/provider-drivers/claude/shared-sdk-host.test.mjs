@@ -135,6 +135,24 @@ test("each query receives its own conversation instructions", async () => {
 	client.detach();
 });
 
+test("memory directory survives host binding and is fenced by the query identity", async () => {
+	const received = [];
+	const factory = fakeQueryFactory();
+	const host = createSharedClaudeSdkHost({
+		hostGeneration: "host-memory-1",
+		createQuery: async (options) => { received.push(options.binding.autoMemoryDirectory); return factory(options); },
+		readHistory: async () => ({ items: [], status: "complete" }),
+	});
+	const client = attach(host, "client-memory-1");
+	await client.bind({ ...binding(1), autoMemoryDirectory: "/memory/account/project" });
+	assert.deepEqual(received, ["/memory/account/project"]);
+	await assert.rejects(client.bind({ ...binding(1), autoMemoryDirectory: "/memory/another/project" }), /runtime_generation_conflict/u);
+	for (const autoMemoryDirectory of ["relative", "~/relative", "bad\0path", 12]) {
+		await assert.rejects(client.bind({ ...binding(2), autoMemoryDirectory }), /memory_directory_invalid/u);
+	}
+	client.detach();
+});
+
 test("private history pages never advance live replay and release idempotently", async () => {
 	const items = Array.from({ length: 70 }, (_, index) => ({
 		body: { markdown: `history ${index}`, role: "assistant", type: "message" },

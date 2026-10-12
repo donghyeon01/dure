@@ -418,6 +418,7 @@ pub(crate) fn inject_provider_settings(
     provider_id: &str,
     command: &str,
     provider_state_environment: &ProviderStateEnvironment,
+    _cwd: &Path,
 ) -> Result<String, String> {
     #[cfg(unix)]
     if (matches!(provider_id, "pi" | "gemini")
@@ -446,6 +447,27 @@ pub(crate) fn inject_provider_settings(
                     .to_string()
             })?;
         validate_published_claude_settings(&path, &published)?;
+        #[cfg(unix)]
+        if provider_state_environment
+            .values()
+            .contains_key("CLAUDE_CONFIG_DIR")
+        {
+            let home = dirs::home_dir().ok_or("claude_memory_unavailable: home unavailable")?;
+            let arguments = dure_provider_profile::claude_memory::prepare_arguments(
+                &home,
+                provider_state_environment,
+                _cwd,
+                &["--settings".into(), path.to_string_lossy().into_owned()],
+            )?;
+            let suffix = command
+                .strip_prefix("claude")
+                .filter(|suffix| suffix.is_empty() || suffix.starts_with(' '))
+                .ok_or("managed_hook_command_unsupported: unsupported Claude executable")?;
+            return Ok(format!(
+                "claude --settings {}{suffix}",
+                shell_quote(&arguments[1])
+            ));
+        }
         Vec::new()
     } else {
         let expected = codex_notify_script_path(&channel.control_dir);
@@ -559,9 +581,10 @@ pub(crate) fn prepare_managed_exec(
     provider_id: &str,
     command: &str,
     provider_state_environment: &ProviderStateEnvironment,
+    cwd: &Path,
     path_supplement: Option<&str>,
 ) -> Result<PreparedManagedExec, String> {
-    let command = inject_provider_settings(provider_id, command, provider_state_environment)?;
+    let command = inject_provider_settings(provider_id, command, provider_state_environment, cwd)?;
     let channel = crate::app_channel::current()
         .map_err(|error| format!("resolve Dure app channel for managed provider failed: {error}"))?;
     let home = dirs::home_dir()

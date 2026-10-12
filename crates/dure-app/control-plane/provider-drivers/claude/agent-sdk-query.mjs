@@ -928,6 +928,9 @@ export function createClaudeAgentSdkQueryFactory({
 				? {}
 				: { resume: binding.providerSessionId }),
 			settingSources: ["user", "project", "local"],
+			...(binding.autoMemoryDirectory
+				? { settings: { autoMemoryDirectory: binding.autoMemoryDirectory } }
+				: {}),
 			spawnClaudeCodeProcess,
 			systemPrompt: {
 				preset: "claude_code",

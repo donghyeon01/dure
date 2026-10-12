@@ -269,6 +269,7 @@ fn admission_request(
         permission_mode,
         credential_id.map(str::to_string),
         &shell,
+        &cwd,
         &provider_state_environment,
         path_supplement.as_deref(),
     )
@@ -277,7 +278,7 @@ fn admission_request(
     let replacement = ManagedRehostReplacement::new(
         provider_id,
         permission_mode,
-        cwd,
+        cwd.clone(),
         launch.rows,
         launch.columns,
         launch.terminal_environment.clone(),
@@ -299,6 +300,7 @@ fn admission_request(
                 provider_id,
                 &fresh_command,
                 replacement.provider_state_environment(),
+                &cwd,
                 path_supplement.as_deref(),
             )
             .map_err(|_| "managed_recovery_launch_invalid")?;

@@ -167,6 +167,58 @@ mod permission_tests {
     }
 
     #[test]
+    fn claude_launch_and_resume_keep_hooks_and_use_the_same_account_project_memory() {
+        use dure_app::{AgentExecutionProfileV1, WorkflowSessionResumePlanV1};
+        use hmux_client::{
+            MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER, ManagedRehostSourceRecipe,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("accounts/claude-work");
+        std::fs::create_dir_all(&profile).unwrap();
+        let environment = ProviderStateEnvironment::new(BTreeMap::from([(
+            "CLAUDE_CONFIG_DIR".into(),
+            profile.to_string_lossy().into_owned(),
+        )]))
+        .unwrap();
+        let mut request = launch_request(None);
+        request.provider_id = dure_app::ProviderIdV1::new("claude").unwrap();
+        request.provider_executable = "claude".into();
+        request.working_directory = root.path().to_string_lossy().into_owned();
+        request.provider_arguments = vec![
+            "--settings".into(),
+            r#"{"hooks":{"SessionStart":[]}}"#.into(),
+        ];
+        request.initial_prompt = Some("keep this prompt".into());
+        request.provider_resume = WorkflowSessionResumePlanV1::from_arguments(
+            Some(vec![
+                "--settings".into(),
+                request.provider_arguments[1].clone(),
+                "--resume".into(),
+                MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER.into(),
+            ]),
+            &AgentExecutionProfileV1::CredentialReference {
+                reference_id: "work".into(),
+                credential_generation: Some("generation".into()),
+            },
+        );
+        let managed = managed_create_request(&request, environment.clone(), None).unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&managed.command()[2]).unwrap()).unwrap();
+        let memory = std::path::Path::new(settings["autoMemoryDirectory"].as_str().unwrap());
+        assert!(memory.is_dir());
+        assert!(!memory.starts_with(&profile));
+        assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
+        assert_eq!(managed.command().last().unwrap(), "keep this prompt");
+        assert_eq!(managed.provider_state_environment(), &environment);
+        let recipe = ManagedRehostSourceRecipe::from_create_request(&managed)
+            .unwrap()
+            .unwrap();
+        let resume = recipe.rehost().render_command("conversation").unwrap();
+        assert_eq!(resume[2], managed.command()[2]);
+        assert_eq!(&resume[3..], &["--resume", "conversation"]);
+    }
+
+    #[test]
     fn resume_recipe_preserves_launch_profile_without_replaying_setup_or_prompt() {
         use dure_app::{AgentExecutionProfileV1, WorkflowSessionResumePlanV1};
         use hmux_client::{

@@ -39,6 +39,30 @@ pub(super) fn managed_create_request(
     provider_state_environment: ProviderStateEnvironment,
     presentation_predecessor: Option<PresentationCheckpointPredecessor>,
 ) -> Result<ManagedCreateRequest, WorkflowSessionLaunchFailureV1> {
+    let mut request = request.clone();
+    if request.provider_id.as_str() == "claude"
+        && provider_state_environment
+            .values()
+            .contains_key("CLAUDE_CONFIG_DIR")
+    {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| rejected_failure("claude_memory_unavailable"))?;
+        let prepare = |arguments: &[String]| {
+            dure_provider_profile::claude_memory::prepare_arguments(
+                &home,
+                &provider_state_environment,
+                std::path::Path::new(&request.working_directory),
+                arguments,
+            )
+            .map_err(|_| rejected_failure("claude_memory_unavailable"))
+        };
+        request.provider_arguments = prepare(&request.provider_arguments)?;
+        if let Some(resume) = request.provider_resume.as_mut() {
+            resume.arguments = prepare(&resume.arguments)?;
+        }
+    }
+    let request = &request;
     let managed = ManagedCreateRequest::new(
         &request.launch_idempotency_key,
         &request.session_id,

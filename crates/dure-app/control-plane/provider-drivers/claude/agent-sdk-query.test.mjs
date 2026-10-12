@@ -588,6 +588,17 @@ async function createController(prepared, observed, query, factoryOptions = {}) 
 	});
 }
 
+test("managed memory settings reach the SDK without changing credential or permission options", async () => {
+	const prepared = { ...binding(), autoMemoryDirectory: "/data/dure/memories/claude/work/project" };
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, scriptedQuery(observed));
+	assert.deepEqual(observed.queryOptions[0].settings, { autoMemoryDirectory: prepared.autoMemoryDirectory });
+	assert.equal(observed.queryOptions[0].env.CLAUDE_CONFIG_DIR, prepared.env.CLAUDE_CONFIG_DIR);
+	assert.equal(observed.queryOptions[0].permissionMode, "default");
+	assert.deepEqual(observed.queryOptions[0].settingSources, ["user", "project", "local"]);
+	await controller.close();
+});
+
 test("conversation instructions append to the preset without changing the human input", async () => {
 	for (const providerSessionId of [null, SESSION_ID]) {
 		const original = binding(1, providerSessionId);

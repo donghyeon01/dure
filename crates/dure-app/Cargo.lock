@@ -596,11 +596,13 @@ name = "dure-provider-profile"
 version = "0.1.0"
 dependencies = [
  "dure-app",
+ "dure-git-checkout",
  "fs2",
  "hmux-runtime-contract",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "toml",
 ]

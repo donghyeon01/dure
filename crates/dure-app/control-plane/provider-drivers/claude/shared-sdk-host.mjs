@@ -202,6 +202,7 @@ function sameBinding(left, right) {
 	return (
 		sameIdentity(left.identity, right.identity) &&
 		left.cwd === right.cwd &&
+		left.autoMemoryDirectory === right.autoMemoryDirectory &&
 		left.instructions === right.instructions &&
 		left.effort === right.effort &&
 		left.model === right.model &&
@@ -260,6 +261,14 @@ function queryBinding(value) {
 	if (!value.env || typeof value.env !== "object" || Array.isArray(value.env)) {
 		throw hostContractError("environment_invalid");
 	}
+	if (
+		value.autoMemoryDirectory !== undefined &&
+		(typeof value.autoMemoryDirectory !== "string" ||
+			!value.autoMemoryDirectory.startsWith("/") ||
+			value.autoMemoryDirectory.includes("\0"))
+	) {
+		throw hostContractError("memory_directory_invalid");
+	}
 	const env = Object.create(null);
 	for (const [key, entry] of Object.entries(value.env)) {
 		if (
@@ -310,6 +319,9 @@ function queryBinding(value) {
 	return Object.freeze({
 		identity,
 		cwd: value.cwd,
+		...(value.autoMemoryDirectory === undefined
+			? {}
+			: { autoMemoryDirectory: value.autoMemoryDirectory }),
 		env: Object.freeze(env),
 		instructions: value.instructions,
 		effort: effortSelection(value.effort),
