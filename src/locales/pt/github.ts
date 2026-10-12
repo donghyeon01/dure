@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "Pastas não incluídas ({count})",
+	"github.workspace.discovery.notRepository": "Esta pasta não é um repositório Git.",
+	"github.workspace.discovery.noRemotes": "Nenhum remoto Git configurado. Adicione um remoto do GitHub nesta pasta e atualize.",
+	"github.workspace.discovery.directoryMissing": "Esta pasta não existe mais. Restaure-a ou adicione seu novo local em Spaces.",
+	"github.workspace.discovery.noRepository": "Nenhum repositório do GitHub conectado",
+	"github.workspace.discovery.connectRepository": "Conecte um repositório Git local ao GitHub e atualize, ou escolha outra pasta.",
 	"github.auth.loginRequired": "Entre com `gh auth login`",
 	"github.auth.cliMissing": "gh CLI não encontrado. Execute `brew install gh` e depois `gh auth login`",
 	"github.auth.missingScopes": "Permissões insuficientes: `gh auth refresh -s {scopes}`",

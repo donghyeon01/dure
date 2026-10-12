@@ -1,4 +1,10 @@
 export const githubEnglishTranslations: Record<string, string> = {
+	"github.workspace.discovery.skipped": "Folders not included ({count})",
+	"github.workspace.discovery.notRepository": "This folder is not a Git repository.",
+	"github.workspace.discovery.noRemotes": "No Git remote is configured. Add a GitHub remote in this folder, then refresh.",
+	"github.workspace.discovery.directoryMissing": "This folder no longer exists. Restore it, or add its new location in Spaces.",
+	"github.workspace.discovery.noRepository": "No GitHub repository connected",
+	"github.workspace.discovery.connectRepository": "Connect a local Git repository to GitHub, then refresh, or choose another folder.",
 	"github.auth.loginRequired": "Sign in with `gh auth login`",
 	"github.auth.cliMissing": "gh CLI not found. Run `brew install gh`, then `gh auth login`",
 	"github.auth.missingScopes": "Missing scopes: `gh auth refresh -s {scopes}`",

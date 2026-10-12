@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "対象外のフォルダー（{count}）",
+	"github.workspace.discovery.notRepository": "このフォルダーは Git リポジトリではありません。",
+	"github.workspace.discovery.noRemotes": "Git リモートが未設定です。このフォルダーに GitHub リモートを追加して更新してください。",
+	"github.workspace.discovery.directoryMissing": "このフォルダーは存在しません。復元するか、Spaces で新しい場所を追加してください。",
+	"github.workspace.discovery.noRepository": "GitHub リポジトリが接続されていません",
+	"github.workspace.discovery.connectRepository": "ローカルの Git リポジトリを GitHub に接続して更新するか、別のフォルダーを選んでください。",
 	"github.auth.loginRequired": "`gh auth login` でログインしてください",
 	"github.auth.cliMissing": "gh CLI が見つかりません。`brew install gh` の後に `gh auth login` を実行してください",
 	"github.auth.missingScopes": "権限が不足しています: `gh auth refresh -s {scopes}`",

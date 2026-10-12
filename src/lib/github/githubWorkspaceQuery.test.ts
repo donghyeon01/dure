@@ -48,6 +48,24 @@ const request: GitHubWorkspaceRequest = {
 };
 
 describe("GitHub workspace requests", () => {
+	it("omits non-repositories and repositories without remotes while keeping missing folders and other failures visible", async () => {
+		const queries = ports();
+		queries.repository.mockImplementation(async ({ id }) => id === "0"
+			? { ok: true, value: repository(id) }
+			: { ok: false, error: { kind: ({ "1": "not-repository", "2": "no-remotes", "3": "directory-missing", "4": "command-failed" } as const)[id as "1" | "2" | "3" | "4"], detail: "detail" } });
+		const result = await loadGitHubWorkspace(request, queries, new AbortController().signal);
+		expect(result?.skipped).toEqual([
+			{ project: targets[1], reason: "not-repository" },
+			{ project: targets[2], reason: "no-remotes" },
+		]);
+		expect(result?.errors.map(({ failure }) => failure.kind)).toEqual(["directory-missing", "command-failed"]);
+		expect(queries.workItems).toHaveBeenCalledTimes(1);
+		// Discovery is fresh on each refresh: adding Git/remotes needs no restart.
+		queries.repository.mockResolvedValue({ ok: true, value: repository("1") });
+		const refreshed = await loadGitHubWorkspace({ ...request, targets: [targets[1]] }, queries, new AbortController().signal);
+		expect(refreshed?.skipped).toEqual([]);
+		expect(refreshed?.repositories).toEqual([repository("1")]);
+	});
 	it.each(["issues", "pullRequests"] as const)(
 		"aggregates %s across repositories with partial failures and a truthful cap",
 		async (view) => {

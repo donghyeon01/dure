@@ -52,6 +52,10 @@ export interface GitHubWorkspaceSnapshot {
 	workItems: GitHubWorkItemRow[];
 	projects: GitHubProjectRow[];
 	errors: GitHubWorkspaceError[];
+	skipped: {
+		project: GitHubWorkspaceRequest["targets"][number];
+		reason: "not-repository" | "no-remotes";
+	}[];
 	limited: boolean;
 }
 
@@ -93,10 +97,15 @@ export async function loadGitHubWorkspace(
 	const repositories = repositoryResults.flatMap(({ result }) =>
 		result.ok ? [result.value] : [],
 	);
-	const errors: GitHubWorkspaceError[] = repositoryResults.flatMap(
-		({ project, result }) =>
-			result.ok ? [] : [{ repository: project.name, failure: result.error }],
-	);
+	const errors: GitHubWorkspaceError[] = [];
+	const skipped: GitHubWorkspaceSnapshot["skipped"] = [];
+	for (const { project, result } of repositoryResults) {
+		if (result.ok) continue;
+		const reason = result.error.kind;
+		if (reason === "not-repository" || reason === "no-remotes") {
+			skipped.push({ project, reason });
+		} else errors.push({ repository: project.name, failure: result.error });
+	}
 
 	const workItems: GitHubWorkItemRow[] = [];
 	let limited = false;
@@ -149,5 +158,5 @@ export async function loadGitHubWorkspace(
 			right.updatedAt.localeCompare(left.updatedAt),
 		);
 	}
-	return { repositories, workItems, projects: projectRows, errors, limited };
+	return { repositories, workItems, projects: projectRows, errors, skipped, limited };
 }

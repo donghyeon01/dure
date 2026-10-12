@@ -197,6 +197,24 @@ afterEach(() => {
 	setLang("ko");
 });
 
+it("keeps ordinary folder omissions quiet and missing paths actionable alongside successful results", async () => {
+	mocks.state.projects = [mocks.state.projects[0], ...["Plain", "No remote", "Removed"].map((name, index) => ({ id: String(index), name, path: `/work/${index}`, kind: "local" as const, isRepo: false }))];
+	mocks.repository.mockImplementation(async (project) => project.id === "project-1"
+		? { ok: true, value: repositoryFor(project.id) }
+		: { ok: false, error: { kind: ({ "0": "not-repository", "1": "no-remotes", "2": "directory-missing" } as const)[project.id as "0" | "1" | "2"], detail: "raw command failure" } });
+	render(<GitHubSidebarWorkspace />);
+	expect(await screen.findByText("Fix refresh")).toBeTruthy();
+	expect(screen.queryByRole("alert")).toBeNull();
+	expect(screen.getByText(/This folder no longer exists/)).toBeTruthy();
+	const summary = screen.getByText("Folders not included (2)");
+	expect(summary.closest("details")?.open).toBe(false);
+	expect(screen.queryByText("raw command failure")).toBeNull();
+	chooseSelectValue(screen.getByRole("combobox", { name: "Repository" }), "0");
+	await screen.findByText("No GitHub repository connected");
+	expect(screen.getByText("Folders not included (1)").closest("details")?.open).toBe(true);
+	expect(screen.getByText(/This folder is not a Git repository/)).toBeTruthy();
+});
+
 describe("GitHubWorkspacePanel", () => {
 	it.each(["pane-issue", "github-issue:project-1:1", "launcher:former"])(
 		"projects open issue membership from current content at %s across restore and replacement",

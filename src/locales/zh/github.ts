@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "未纳入的文件夹（{count}）",
+	"github.workspace.discovery.notRepository": "此文件夹不是 Git 仓库。",
+	"github.workspace.discovery.noRemotes": "未配置 Git 远程仓库。请在此文件夹中添加 GitHub 远程仓库，然后刷新。",
+	"github.workspace.discovery.directoryMissing": "此文件夹已不存在。请恢复它，或在 Spaces 中添加新位置。",
+	"github.workspace.discovery.noRepository": "未连接 GitHub 仓库",
+	"github.workspace.discovery.connectRepository": "请将本地 Git 仓库连接到 GitHub 后刷新，或选择其他文件夹。",
 	"github.auth.loginRequired": "使用 `gh auth login` 登录",
 	"github.auth.cliMissing": "未找到 gh CLI。请先运行 `brew install gh`，然后 `gh auth login`",
 	"github.auth.missingScopes": "权限不足：`gh auth refresh -s {scopes}`",

@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "Dossiers non inclus ({count})",
+	"github.workspace.discovery.notRepository": "Ce dossier n’est pas un dépôt Git.",
+	"github.workspace.discovery.noRemotes": "Aucun dépôt distant Git n’est configuré. Ajoutez un dépôt distant GitHub dans ce dossier, puis actualisez.",
+	"github.workspace.discovery.directoryMissing": "Ce dossier n’existe plus. Restaurez-le ou ajoutez son nouvel emplacement dans Spaces.",
+	"github.workspace.discovery.noRepository": "Aucun dépôt GitHub connecté",
+	"github.workspace.discovery.connectRepository": "Connectez un dépôt Git local à GitHub, puis actualisez, ou choisissez un autre dossier.",
 	"github.auth.loginRequired": "Connectez-vous avec `gh auth login`",
 	"github.auth.cliMissing": "gh CLI introuvable. Lancez `brew install gh` puis `gh auth login`",
 	"github.auth.missingScopes": "Autorisations insuffisantes : `gh auth refresh -s {scopes}`",

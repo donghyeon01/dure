@@ -25,10 +25,11 @@ import {
 	parseGitHubIssueIdentity,
 } from "@/lib/github/githubIssueDetails";
 import { GITHUB_RESULT_LIMIT } from "@/lib/github/githubPagination";
-import type {
-	GitHubListResult,
-	GitHubQueryFailure,
-	GitHubQueryResult,
+import {
+	type GitHubListResult,
+	type GitHubQueryFailure,
+	type GitHubQueryResult,
+	githubRepositoryFailure,
 } from "@/lib/github/githubQuery";
 import {
 	type GitHubProjectRow,
@@ -265,7 +266,7 @@ async function ghCloseDuplicateIssue(
 export async function ghRepository(
 	project: Pick<Project, "id" | "name" | "path">,
 ): Promise<GitHubQueryResult<GitHubRepository>> {
-	return readGitHubQuery(
+	const result = await readGitHubQuery(
 		() =>
 			ghExec(
 				["repo", "view", "--json", "nameWithOwner,url,owner,isInOrganization"],
@@ -273,6 +274,7 @@ export async function ghRepository(
 			),
 		(stdout) => parseGitHubRepository(stdout, project),
 	);
+	return result.ok ? result : { ok: false, error: githubRepositoryFailure(result.error) };
 }
 
 export async function ghWorkspaceWorkItems(

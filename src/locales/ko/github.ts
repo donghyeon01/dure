@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "조회에서 제외된 폴더 ({count})",
+	"github.workspace.discovery.notRepository": "Git 저장소가 아닌 폴더입니다.",
+	"github.workspace.discovery.noRemotes": "Git 원격 저장소가 없습니다. 이 폴더에 GitHub remote를 추가한 뒤 새로고침하세요.",
+	"github.workspace.discovery.directoryMissing": "이 폴더가 더 이상 존재하지 않습니다. 폴더를 복원하거나 Spaces에서 새 위치를 추가하세요.",
+	"github.workspace.discovery.noRepository": "연결된 GitHub 저장소가 없습니다",
+	"github.workspace.discovery.connectRepository": "로컬 Git 저장소를 GitHub에 연결한 뒤 새로고침하거나 다른 폴더를 선택하세요.",
 	"github.auth.loginRequired": "`gh auth login`으로 로그인하세요",
 	"github.auth.cliMissing": "gh CLI가 없습니다. `brew install gh` 후 `gh auth login`",
 	"github.auth.missingScopes": "권한이 모자랍니다: `gh auth refresh -s {scopes}`",

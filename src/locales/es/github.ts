@@ -1,4 +1,10 @@
 export const github: Record<string, string> = {
+	"github.workspace.discovery.skipped": "Carpetas no incluidas ({count})",
+	"github.workspace.discovery.notRepository": "Esta carpeta no es un repositorio Git.",
+	"github.workspace.discovery.noRemotes": "No hay ningún remoto Git configurado. Añade un remoto de GitHub en esta carpeta y actualiza.",
+	"github.workspace.discovery.directoryMissing": "Esta carpeta ya no existe. Restáurala o añade su nueva ubicación en Spaces.",
+	"github.workspace.discovery.noRepository": "Ningún repositorio de GitHub conectado",
+	"github.workspace.discovery.connectRepository": "Conecta un repositorio Git local a GitHub y actualiza, o elige otra carpeta.",
 	"github.auth.loginRequired": "Inicia sesión con `gh auth login`",
 	"github.auth.cliMissing": "No se encontró gh CLI. Ejecuta `brew install gh` y luego `gh auth login`",
 	"github.auth.missingScopes": "Faltan permisos: `gh auth refresh -s {scopes}`",

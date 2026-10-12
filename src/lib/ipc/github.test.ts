@@ -214,6 +214,22 @@ describe("GitHub workspace queries", () => {
 		).resolves.toEqual({ ok: true, value: repository });
 		expect(lastArgs().slice(0, 2)).toEqual(["repo", "view"]);
 	});
+	it.each([
+		["failed to run git: fatal: not a git repository (or any of the parent directories): .git", "not-repository"],
+		["no git remotes found", "no-remotes"],
+		["resolve login command cwd failed: No such file or directory (os error 2)", "directory-missing"],
+		["resolve login command cwd failed: Permission denied (os error 13)", "command-failed"],
+		["failed to run git: fatal: detected dubious ownership in repository", "command-failed"],
+		["HTTP 401: Requires authentication", "command-failed"],
+		["gh spawn: No such file or directory (os error 2)", "command-failed"],
+	])("classifies repository discovery only: %s", async (detail, kind) => {
+		invokeMock.mockResolvedValue(raw({ code: 1, stderr: detail }));
+		await expect(ghRepository({ id: "project-1", name: "Dure", path: "/repo" }))
+			.resolves.toEqual({ ok: false, error: { kind, detail } });
+		// The same text during a data read is still a failure, never an omission.
+		await expect(ghWorkspaceWorkItems(repository, "issue", "open", ""))
+			.resolves.toEqual({ ok: false, error: { kind: "command-failed", detail } });
+	});
 	it("loads assignable users across pages from the selected host and repository", async () => {
 		invokeMock.mockResolvedValue(
 			raw({ stdout: '[[{"login":"dev"}],[{"login":"qa"}]]' }),

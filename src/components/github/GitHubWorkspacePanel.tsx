@@ -26,6 +26,7 @@ import {
 	useGitHubWorkspaceState,
 } from "@/components/github/useGitHubWorkspaceState";
 import { Button } from "@/components/ui/button";
+import { Disclosure } from "@/components/ui/disclosure";
 import { IconButton } from "@/components/ui/icon-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { RefreshButton } from "@/components/ui/refresh-button";
@@ -206,7 +207,7 @@ function GitHubWorkspaceSurface({
 }) {
 	const { projects, agents, activeSpaceId } = useGitHubWorkspaceState();
 	// Registration-time Git availability can be stale. The current GitHub query
-	// owns repository discovery and its errors for every registered local folder.
+	// owns discovery, including folders that currently have no Git/GitHub setup.
 	const localRepositories = useMemo(
 		() => projects.filter((project) => project.kind === "local"),
 		[projects],
@@ -335,6 +336,8 @@ function GitHubWorkspaceSurface({
 		view === "projects"
 			? (visiblePayload?.projects.length ?? 0)
 			: (visiblePayload?.workItems.length ?? 0);
+	const noConnectedRepository = visiblePayload?.repositories.length === 0
+		&& visiblePayload.errors.length === 0 && visiblePayload.skipped.length > 0;
 	const { pagination, page, setPage } = useGitHubWorkspacePagination(
 		queryScope,
 		visiblePayload ? shownCount : null,
@@ -608,7 +611,9 @@ function GitHubWorkspaceSurface({
 					>
 						{visiblePayload.errors.map((error, index) => {
 							const key = `${error.repository ?? "github"}-${error.failure.kind}-${index}`;
-							return error.failure.kind === "project-scope" ? (
+							const warning = error.failure.kind === "project-scope"
+								|| error.failure.kind === "directory-missing";
+							return warning ? (
 								<Alert key={key} tone="warn" role="status" surface={dense ? "card" : "outline"}>
 									{errorMessage(error)}
 								</Alert>
@@ -639,6 +644,26 @@ function GitHubWorkspaceSurface({
 						!dense && "pt-2",
 					)}
 				>
+					{visiblePayload && visiblePayload.skipped.length > 0 && (
+						<Disclosure
+							key={projectId}
+							open={projectId !== ALL_REPOSITORIES}
+							label={t("github.workspace.discovery.skipped", {
+								count: visiblePayload.skipped.length,
+							})}
+							size={dense ? "xs" : "meta"}
+							className={cn("text-muted-foreground", dense ? "px-5 py-3" : "px-3 pb-2")}
+						>
+							<ul className="space-y-2">
+								{visiblePayload.skipped.map(({ project, reason }) => (
+									<li key={project.id} className="break-words">
+										<span className="font-medium">{project.name}</span>{": "}
+										{githubQueryFailureMessage({ kind: reason, detail: "" })}
+									</li>
+								))}
+							</ul>
+						</Disclosure>
+					)}
 					{localRepositories.length === 0 ? (
 						<EmptyState
 							title={t("github.workspace.empty.noRepositories")}
@@ -649,8 +674,12 @@ function GitHubWorkspaceSurface({
 						/>
 					) : !visiblePayload ? null : shownCount === 0 ? (
 						<EmptyState
-							title={t("github.workspace.empty.noResults")}
-							description={t("github.workspace.empty.noResultsDescription")}
+							title={t(noConnectedRepository
+								? "github.workspace.discovery.noRepository"
+								: "github.workspace.empty.noResults")}
+							description={t(noConnectedRepository
+								? "github.workspace.discovery.connectRepository"
+								: "github.workspace.empty.noResultsDescription")}
 							compact={!dense}
 						/>
 					) : (
