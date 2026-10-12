@@ -232,8 +232,13 @@ pub fn prepare_directory(
     // Explicit user memory settings remain authoritative. Redirecting them
     // would hide existing custom notes or undo deliberate sharing. This fix
     // replaces only the provider's implicit config-directory default.
-    for file in ["settings.json", "settings.local.json"] {
-        let path = profile.join(file);
+    // Observe explicit project choices without copying them into a trusted
+    // launch setting. Claude still owns workspace trust and scope precedence.
+    let project_settings = cwd.join(".claude");
+    for path in [&profile, &project_settings]
+        .into_iter()
+        .flat_map(|root| ["settings.json", "settings.local.json"].map(|file| root.join(file)))
+    {
         match fs::symlink_metadata(&path) {
             Ok(_) => {
                 let document: Value = serde_json::from_slice(&read_regular(&path)?)
@@ -432,9 +437,14 @@ pub fn prepare_arguments(
             return Ok(arguments.to_vec());
         }
     }
-    let Some(directory) = prepare_directory(home, Some(config), cwd)? else {
+    let directory = prepare_directory(home, Some(config), cwd)?;
+    if directory.is_none()
+        && !arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--settings" && generated_settings_path(&pair[1]))
+    {
         return Ok(arguments.to_vec());
-    };
+    }
     let mut arguments = arguments.to_vec();
     let indices: Vec<_> = arguments
         .iter()
@@ -452,10 +462,16 @@ pub fn prepare_arguments(
         )?,
         None => Map::new(),
     };
-    document.insert(
-        "autoMemoryDirectory".into(),
-        Value::from(directory.to_string_lossy().into_owned()),
-    );
+    if let Some(directory) = directory {
+        document.insert(
+            "autoMemoryDirectory".into(),
+            Value::from(directory.to_string_lossy().into_owned()),
+        );
+    } else {
+        // A persisted resume recipe may carry our old generated setting. Remove
+        // only that default when the user has since chosen their own directory.
+        document.remove("autoMemoryDirectory");
+    }
     // Keep settings contents out of argv and durable command recipes. The
     // immutable owner-only file remains inside the protected config profile.
     let value = publish_settings(config, &document)?;
@@ -716,6 +732,71 @@ mod migration_tests {
             "custom notes"
         );
         assert!(!f.home.join(".dure/memories").exists());
+    }
+
+    #[test]
+    fn explicit_project_memory_settings_remain_provider_owned() {
+        for file in ["settings.json", "settings.local.json"] {
+            let f = Fixture::new();
+            let directory = f.cwd.join(".claude");
+            fs::create_dir(&directory).unwrap();
+            let settings = directory.join(file);
+            let contents = br#"{"autoMemoryDirectory":"~/custom-project-memory"}"#;
+            fs::write(&settings, contents).unwrap();
+            assert!(
+                prepare_directory(&f.home, Some(&f.account), &f.cwd)
+                    .unwrap()
+                    .is_none(),
+                "an explicit project memory setting must not be overridden"
+            );
+            assert_eq!(fs::read(settings).unwrap(), contents);
+            assert!(!f.home.join(".dure/memories").exists());
+        }
+    }
+
+    #[test]
+    fn a_custom_setting_replaces_only_the_generated_memory_default_on_resume() {
+        for project_setting in [false, true] {
+            let f = Fixture::new();
+            let environment = ProviderStateEnvironment::new(std::collections::BTreeMap::from([(
+                "CLAUDE_CONFIG_DIR".into(),
+                f.account.to_string_lossy().into_owned(),
+            )]))
+            .unwrap();
+            let original = prepare_arguments(
+                &f.home,
+                &environment,
+                &f.cwd,
+                &[
+                    "--settings".into(),
+                    r#"{"hooks":{"SessionStart":[]}}"#.into(),
+                    "--resume".into(),
+                    "exact-conversation".into(),
+                ],
+            )
+            .unwrap();
+            let root = if project_setting {
+                f.cwd.join(".claude")
+            } else {
+                f.account.clone()
+            };
+            fs::create_dir_all(&root).unwrap();
+            fs::write(
+                root.join("settings.local.json"),
+                r#"{"autoMemoryDirectory":"~/chosen-memory"}"#,
+            )
+            .unwrap();
+            let prepared = prepare_arguments(&f.home, &environment, &f.cwd, &original).unwrap();
+            let document = settings(&prepared[1]).unwrap();
+            assert!(!document.contains_key("autoMemoryDirectory"));
+            assert_eq!(document["hooks"]["SessionStart"], serde_json::json!([]));
+            assert_eq!(&prepared[2..], &["--resume", "exact-conversation"]);
+            assert!(
+                settings(&original[1])
+                    .unwrap()
+                    .contains_key("autoMemoryDirectory")
+            );
+        }
     }
 
     #[test]
