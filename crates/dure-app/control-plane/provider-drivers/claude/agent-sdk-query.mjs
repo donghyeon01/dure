@@ -1038,17 +1038,18 @@ export function createClaudeAgentSdkQueryFactory({
 					throw adapterError("stale_turn_identity");
 				}
 				if (!turn.interruptPromise) {
-					turn.interruptPromise = Promise.resolve()
-						.then(() => sdkQuery.interrupt())
-						.then((value) => {
-							const receipt = interruptReceipt(value);
-							emit("provider_turn_interrupt_acknowledged", {
-								clientMessageId,
-								interruptRequestId,
-								...receipt,
-							});
-							return receipt;
+					turn.interruptPromise = (async () => {
+						// Dispatch in the same JS turn as the identity check. The host
+						// owns successor admission until this control request settles.
+						const receipt = interruptReceipt(await sdkQuery.interrupt());
+						if (closing || terminalDelivered) throw adapterError("query_closed");
+						emit("provider_turn_interrupt_acknowledged", {
+							clientMessageId,
+							interruptRequestId,
+							...receipt,
 						});
+						return receipt;
+					})();
 				}
 				return turn.interruptPromise;
 			},

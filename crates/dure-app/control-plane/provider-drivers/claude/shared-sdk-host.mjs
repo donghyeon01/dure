@@ -1050,6 +1050,7 @@ class SharedClaudeSdkHost {
 			bindReceipt: undefined,
 			history: unavailableHistory(),
 			messages: new Map(),
+			interrupting: undefined,
 			replay: new QueryReplay(this.#replayLimits, replayBase),
 			replacementAuthority,
 			retiring: false,
@@ -1205,6 +1206,7 @@ class SharedClaudeSdkHost {
 			}
 			return existingReceipt.acceptance;
 		}
+		if (record.interrupting) throw hostContractError("query_busy");
 		if (record.retiring || record.state !== "running") {
 			throw hostContractError("turn_not_running");
 		}
@@ -1251,7 +1253,7 @@ class SharedClaudeSdkHost {
 			}
 			return existingReceipt.acceptance;
 		}
-		if (record.retiring || record.state !== "waiting_for_input") {
+		if (record.interrupting || record.retiring || record.state !== "waiting_for_input") {
 			throw hostContractError("query_busy");
 		}
 		if (record.messages.size >= MAX_UNCOMMITTED_TURN_RECEIPTS) {
@@ -1334,10 +1336,27 @@ class SharedClaudeSdkHost {
 		if (record.activeClientMessageId !== request.clientMessageId) {
 			throw hostContractError("stale_turn_identity");
 		}
+		// Query ownership outlives a client socket, a turn result and replay ACK.
+		// Retain this exact receipt until the provider confirms the interrupt;
+		// an uncertain failure must not reach newly admitted successor input.
+		record.interrupting = turnReceipt;
 		const promise = Promise.resolve()
 			.then(() => record.controller.interruptTurn(request))
-			.then((receipt) => controllerInterruptReceipt(receipt, request))
+			.then((receipt) => {
+				const result = controllerInterruptReceipt(receipt, request);
+				if (record.interrupting === turnReceipt) record.interrupting = undefined;
+				return result;
+			})
 			.catch((error) => {
+				// This typed adapter refusal occurs before any SDK control request.
+				// All other failures retain the fence until exact Query closure.
+				if (
+					error?.code === "DURE_CLAUDE_AGENT_SDK_CONTRACT" &&
+					error.message === "dure_claude_agent_sdk_stale_turn_identity" &&
+					record.interrupting === turnReceipt
+				) {
+					record.interrupting = undefined;
+				}
 				throw controllerActionError(error);
 			});
 		turnReceipt.interrupt = Object.freeze({
@@ -1407,7 +1426,11 @@ class SharedClaudeSdkHost {
 		const record = this.#record(identity);
 		record.replay.acknowledge(sequence);
 		for (const [clientMessageId, receipt] of record.messages) {
-			if (receipt.finalEventSequence !== null && receipt.finalEventSequence <= sequence) {
+			if (
+				receipt !== record.interrupting &&
+				receipt.finalEventSequence !== null &&
+				receipt.finalEventSequence <= sequence
+			) {
 				record.messages.delete(clientMessageId);
 			}
 		}

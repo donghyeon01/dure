@@ -90,6 +90,234 @@ function attach(host, clientGeneration, cursors = {}) {
 	});
 }
 
+async function interruptionFixture(t, interruptFailure) {
+	const turn = Promise.withResolvers();
+	const started = Promise.withResolvers();
+	const interruption = Promise.withResolvers();
+	const interruptEntered = Promise.withResolvers();
+	const calls = { interrupt: 0, start: [], steer: [] };
+	const host = createSharedClaudeSdkHost({
+		hostGeneration: "host-interrupt-successor",
+		createQuery: async ({ terminal }) => ({
+			...passiveInteractionControls(),
+			startTurn({ clientMessageId }) {
+				calls.start.push(clientMessageId);
+				started.resolve();
+				return clientMessageId === "turn-a"
+					? turn.promise
+					: Promise.resolve(null);
+			},
+			steerTurn({ clientMessageId }) {
+				calls.steer.push(clientMessageId);
+			},
+			interruptTurn() {
+				calls.interrupt += 1;
+				interruptEntered.resolve();
+				if (interruptFailure) return Promise.reject(interruptFailure);
+				return interruption.promise;
+			},
+			async close() {
+				terminal({ code: 0, signal: null });
+			},
+			async invalidate(reason) {
+				terminal({ reason });
+			},
+		}),
+		readHistory: async () => ({ items: [], status: "complete" }),
+	});
+	const prepared = binding(18);
+	const first = attach(host, "client-interrupt-first");
+	await first.bind(prepared);
+	first.startTurn(prepared.identity, { clientMessageId: "turn-a", input: "A" });
+	await started.promise;
+	const request = {
+		clientMessageId: "turn-a",
+		interruptRequestId: "interrupt-a",
+	};
+	const receipt = {
+		cancelledMessageIds: [],
+		receiptAvailable: true,
+		stillQueuedMessageIds: [],
+	};
+	t.after(async () => {
+		interruption.resolve(receipt);
+		turn.resolve(null);
+		await host.closeQuery(prepared.identity);
+	});
+	return {
+		host,
+		prepared,
+		first,
+		request,
+		receipt,
+		calls,
+		turn,
+		interruption,
+		interruptEntered,
+	};
+}
+
+test("pending interrupt survives result ACK and reconnect before admitting successor input", async (t) => {
+	const f = await interruptionFixture(t);
+	const pending = f.first.interruptTurn(f.prepared.identity, f.request);
+	await f.interruptEntered.promise;
+	assert.throws(
+		() =>
+			f.first.steerTurn(f.prepared.identity, {
+				clientMessageId: "steer-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	f.turn.resolve(null);
+	const completed = await waitForReplay(
+		f.first,
+		f.prepared.identity,
+		({ events }) => events.some(({ kind }) => kind === "turn_completed"),
+	);
+	f.first.ack(f.prepared.identity, completed.latestSequence);
+	f.first.detach();
+	const second = attach(f.host, "client-interrupt-reconnected");
+	assert.throws(
+		() =>
+			second.startTurn(f.prepared.identity, {
+				clientMessageId: "turn-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	assert.throws(
+		() =>
+			second.steerTurn(f.prepared.identity, {
+				clientMessageId: "steer-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	const replay = second.interruptTurn(f.prepared.identity, f.request);
+	await assert.rejects(
+		second.interruptTurn(f.prepared.identity, {
+			...f.request,
+			interruptRequestId: "interrupt-conflict",
+		}),
+		/turn_interrupt_conflict/u,
+	);
+	assert.deepEqual(f.calls, { interrupt: 1, start: ["turn-a"], steer: [] });
+	f.interruption.resolve(f.receipt);
+	assert.deepEqual(await replay, await pending);
+	assert.deepEqual(
+		await second.interruptTurn(f.prepared.identity, f.request),
+		await pending,
+	);
+	second.startTurn(f.prepared.identity, {
+		clientMessageId: "turn-b",
+		input: "B",
+	});
+	const successor = await waitForReplay(
+		second,
+		f.prepared.identity,
+		({ events }) =>
+			events.some(
+				({ kind, payload }) =>
+					kind === "turn_completed" && payload.clientMessageId === "turn-b",
+			),
+	);
+	second.ack(f.prepared.identity, successor.latestSequence);
+	await assert.rejects(
+		second.interruptTurn(f.prepared.identity, f.request),
+		/stale_turn_identity/u,
+	);
+	assert.deepEqual(f.calls.start, ["turn-a", "turn-b"]);
+	second.detach();
+});
+
+test("uncertain interrupt failure keeps input fenced through ACK and reconnect while exact close works", async (t) => {
+	const f = await interruptionFixture(t);
+	const pending = f.first.interruptTurn(f.prepared.identity, f.request);
+	const failure = assert.rejects(pending, /interrupt_response_lost/u);
+	await f.interruptEntered.promise;
+	f.turn.resolve(null);
+	const completed = await waitForReplay(
+		f.first,
+		f.prepared.identity,
+		({ events }) => events.some(({ kind }) => kind === "turn_completed"),
+	);
+	f.first.ack(f.prepared.identity, completed.latestSequence);
+	f.interruption.reject(new Error("interrupt_response_lost"));
+	await failure;
+	f.first.detach();
+	const second = attach(f.host, "client-interrupt-uncertain");
+	assert.throws(
+		() =>
+			second.startTurn(f.prepared.identity, {
+				clientMessageId: "turn-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	assert.throws(
+		() =>
+			second.steerTurn(f.prepared.identity, {
+				clientMessageId: "steer-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	await assert.rejects(
+		second.interruptTurn(f.prepared.identity, f.request),
+		/interrupt_response_lost/u,
+	);
+	await assert.rejects(
+		second.interruptTurn(f.prepared.identity, {
+			...f.request,
+			interruptRequestId: "interrupt-conflict",
+		}),
+		/turn_interrupt_conflict/u,
+	);
+	const other = binding(19);
+	await second.bind(other);
+	second.startTurn(other.identity, {
+		clientMessageId: "unrelated-turn",
+		input: "Other Query",
+	});
+	await waitForReplay(second, other.identity, ({ events }) =>
+		events.some(({ kind }) => kind === "turn_completed"),
+	);
+	await second.closeQuery(f.prepared.identity);
+	await assert.rejects(
+		second.interruptTurn(f.prepared.identity, f.request),
+		/query_exited/u,
+	);
+	assert.equal(f.calls.interrupt, 1);
+	assert.deepEqual(f.calls.start, ["turn-a", "unrelated-turn"]);
+	await second.closeQuery(other.identity);
+	second.detach();
+});
+
+test("a proven pre-effect stale interrupt refuses without poisoning successor admission", async (t) => {
+	const f = await interruptionFixture(t, agentSdkError("stale_turn_identity"));
+	await assert.rejects(
+		f.first.interruptTurn(f.prepared.identity, f.request),
+		/stale_turn_identity/u,
+	);
+	f.turn.resolve(null);
+	await waitForReplay(f.first, f.prepared.identity, ({ events }) =>
+		events.some(({ kind }) => kind === "turn_completed"),
+	);
+	f.first.startTurn(f.prepared.identity, {
+		clientMessageId: "turn-b",
+		input: "B",
+	});
+	await waitForReplay(f.first, f.prepared.identity, ({ events }) =>
+		events.some(
+			({ kind, payload }) =>
+				kind === "turn_completed" && payload.clientMessageId === "turn-b",
+		),
+	);
+	assert.equal(f.calls.interrupt, 1);
+	f.first.detach();
+});
+
 async function waitForReplay(client, queryIdentity, predicate) {
 	const deadline = Date.now() + 1_000;
 	while (Date.now() < deadline) {

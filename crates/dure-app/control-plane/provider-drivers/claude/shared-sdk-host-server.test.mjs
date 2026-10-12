@@ -374,6 +374,122 @@ test("DCH1 routes bounded interaction snapshots, answers, and idempotent interru
 	}
 });
 
+test("DCH1 reconnect and replay ACK retain a pending interrupt's successor fence", async () => {
+	const boundary = createBoundary();
+	const turn = Promise.withResolvers();
+	const interruption = Promise.withResolvers();
+	const entered = Promise.withResolvers();
+	const started = [];
+	let interruptCalls = 0;
+	const server = await startSharedClaudeSdkHostServer({
+		...boundary,
+		hostGeneration,
+		createQuery: async ({ terminal }) => ({
+			...passiveInteractionControls(),
+			startTurn({ clientMessageId }) {
+				started.push(clientMessageId);
+				return clientMessageId === "turn-a"
+					? turn.promise
+					: Promise.resolve(null);
+			},
+			interruptTurn() {
+				interruptCalls += 1;
+				entered.resolve();
+				return interruption.promise;
+			},
+			async close() {
+				terminal({ code: 0, signal: null });
+			},
+			async invalidate(reason) {
+				terminal({ reason });
+			},
+		}),
+	});
+	const receipt = {
+		cancelledMessageIds: [],
+		receiptAvailable: true,
+		stillQueuedMessageIds: [],
+	};
+	try {
+		const { client: first } = await connection(
+			boundary.endpoint,
+			"client-interrupt-first",
+		);
+		await first.bind({
+			identity: queryIdentity,
+			cwd: "/workspace/interrupt",
+			env: {},
+		});
+		await first.startTurn(queryIdentity, {
+			clientMessageId: "turn-a",
+			input: "A",
+		});
+		const request = {
+			clientMessageId: "turn-a",
+			interruptRequestId: "interrupt-a",
+		};
+		const lostResponse = assert.rejects(
+			first.interruptTurn(queryIdentity, request),
+			/transport_closed/u,
+		);
+		await entered.promise;
+		turn.resolve(null);
+		await waitForCondition(
+			() => server.host.snapshot().queries[0].state === "waiting_for_input",
+		);
+		await first.detach();
+		await lostResponse;
+		const { client: second } = await connection(
+			boundary.endpoint,
+			"client-interrupt-second",
+		);
+		const replay = await second.replay(queryIdentity, 0);
+		await second.ack(queryIdentity, replay.latestSequence);
+		await assert.rejects(
+			second.startTurn(queryIdentity, {
+				clientMessageId: "turn-b",
+				input: "B",
+			}),
+			/query_busy/u,
+		);
+		await assert.rejects(
+			second.steerTurn(queryIdentity, {
+				clientMessageId: "steer-b",
+				input: "B",
+			}),
+			/query_busy/u,
+		);
+		await assert.rejects(
+			second.interruptTurn(queryIdentity, {
+				...request,
+				interruptRequestId: "conflict",
+			}),
+			/turn_interrupt_conflict/u,
+		);
+		const retry = second.interruptTurn(queryIdentity, request);
+		interruption.resolve(receipt);
+		assert.equal((await retry).clientMessageId, "turn-a");
+		assert.equal(interruptCalls, 1);
+		assert.deepEqual(started, ["turn-a"]);
+		await second.startTurn(queryIdentity, {
+			clientMessageId: "turn-b",
+			input: "B",
+		});
+		await waitForCondition(
+			async () =>
+				(await second.snapshot()).queries[0].state === "waiting_for_input",
+		);
+		assert.deepEqual(started, ["turn-a", "turn-b"]);
+		await second.closeQuery(queryIdentity);
+		await second.detach();
+	} finally {
+		turn.resolve(null);
+		interruption.resolve(receipt);
+		await server.close();
+		fs.rmSync(boundary.root, { force: true, recursive: true });
+	}
+});
+
 test("a cold production host accepts its controller before a Query needs a runtime download", async (context) => {
 	const boundary = createBoundary();
 	const runtimeRoot = path.join(boundary.root, "claude-runtime");

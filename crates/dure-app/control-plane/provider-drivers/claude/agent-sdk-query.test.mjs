@@ -15,6 +15,7 @@ import {
 	installClaudeRuntimeArtifact,
 } from "./claude-runtime-artifact.mjs";
 import { loadPinnedClaudeSdkRuntime } from "./sdk-runtime.mjs";
+import { createSharedClaudeSdkHost } from "./shared-sdk-host.mjs";
 
 const SESSION_ID = "11111111-2222-4333-8444-555555555555";
 const DCH1_EVENT_MAX_BYTES = 64 * 1024;
@@ -570,6 +571,139 @@ function scriptedStartup(query) {
 			query: (prompt) => query({ options, prompt }),
 		});
 }
+
+function delayedInterruptQuery(observed, acknowledgement) {
+	const query = interactiveQuery(observed);
+	return (options) => {
+		const sdkQuery = query(options);
+		return {
+			...sdkQuery,
+			async interrupt() {
+				const receipt = await sdkQuery.interrupt();
+				await acknowledgement.promise;
+				return receipt;
+			},
+		};
+	};
+}
+
+test("the shared owner fences actual Query input across result ACK and reconnect until interrupt settlement", async (t) => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const acknowledgement = Promise.withResolvers();
+	const factory = createClaudeAgentSdkQueryFactory({
+		claudeCodeVersion: "2.1.234",
+		createRelaySpawner: createRelaySpawnerProbe(observed),
+		runtimeArtifact,
+		sdkVersion: "0.3.234",
+		startup: scriptedStartup(delayedInterruptQuery(observed, acknowledgement)),
+	});
+	const host = createSharedClaudeSdkHost({
+		hostGeneration: "host-query-interrupt-fence",
+		createQuery: factory,
+		readHistory: async () => ({ items: [], status: "complete" }),
+	});
+	const first = host.attach({
+		hostGeneration: host.hostGeneration,
+		clientGeneration: "first",
+	});
+	await first.bind(prepared);
+	t.after(async () => {
+		acknowledgement.resolve();
+		await host.closeQuery(prepared.identity);
+	});
+	first.startTurn(prepared.identity, {
+		clientMessageId: "turn-a",
+		input: "interrupt",
+	});
+	await waitForCondition(() => observed.inputs.length === 1);
+	const request = {
+		clientMessageId: "turn-a",
+		interruptRequestId: "interrupt-a",
+	};
+	const pending = first.interruptTurn(prepared.identity, request);
+	await waitForCondition(
+		() => first.snapshot().queries[0].state === "waiting_for_input",
+	);
+	first.ack(
+		prepared.identity,
+		first.replay(prepared.identity, 0).latestSequence,
+	);
+	first.detach();
+	const second = host.attach({
+		hostGeneration: host.hostGeneration,
+		clientGeneration: "second",
+	});
+	assert.throws(
+		() =>
+			second.startTurn(prepared.identity, {
+				clientMessageId: "turn-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	assert.throws(
+		() =>
+			second.steerTurn(prepared.identity, {
+				clientMessageId: "steer-b",
+				input: "B",
+			}),
+		/query_busy/u,
+	);
+	const replay = second.interruptTurn(prepared.identity, request);
+	assert.equal(observed.inputs.length, 1);
+	assert.equal(observed.interruptCalls, 1);
+	acknowledgement.resolve();
+	assert.deepEqual(await replay, await pending);
+	second.startTurn(prepared.identity, {
+		clientMessageId: "turn-b",
+		input: "B",
+	});
+	await waitForCondition(
+		() =>
+			observed.inputs.length === 2 &&
+			second.snapshot().queries[0].state === "waiting_for_input",
+	);
+	assert.equal(observed.interruptCalls, 1);
+	second.detach();
+});
+
+test("a late interrupt acknowledgement cannot publish after exact Query close", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const acknowledgement = Promise.withResolvers();
+	const controller = await createController(
+		prepared,
+		observed,
+		delayedInterruptQuery(observed, acknowledgement),
+	);
+	const turn = controller.startTurn({
+		clientMessageId: "turn-a",
+		input: "interrupt",
+	});
+	await waitForCondition(() => observed.inputs.length === 1);
+	const pending = controller.interruptTurn({
+		clientMessageId: "turn-a",
+		interruptRequestId: "interrupt-a",
+	});
+	assert.equal(
+		observed.interruptCalls,
+		1,
+		"SDK dispatch follows the identity check without a microtask gap",
+	);
+	await turn;
+	await controller.close();
+	const refused = assert.rejects(pending, /query_closed/u);
+	acknowledgement.resolve();
+	await refused;
+	assert.equal(
+		observed.events.some(
+			({ kind }) => kind === "provider_turn_interrupt_acknowledged",
+		),
+		false,
+	);
+	assert.equal(observed.closeCalls, 1);
+});
 
 async function createController(prepared, observed, query, factoryOptions = {}) {
 	const factory = createClaudeAgentSdkQueryFactory({
