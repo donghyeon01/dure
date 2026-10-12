@@ -331,6 +331,7 @@ export async function transitionAgentRuntime(
 						agentId,
 						targetInteractionProfile: plan.target.interactionProfile,
 						expectedSourceRevision: sourceRevision,
+						expectedOperationId: repairIntent.operationId,
 						targetExecutionProfile: plan.target.executionProfile,
 						targetLaunchSelection: plan.target.launchSelection,
 						routeAuthority: observation.routeAuthority,
@@ -696,8 +697,15 @@ async function consumeRuntimeReplacement(
 	if (assertSelectedAuthority) await assertSelectedAuthority();
 	checkpoint();
 	try {
-		const result = await request();
+		const receipt = await request();
+		// Workspace repair needs both the durable replacement lineage and the
+		// authoritative workspace relation before projecting success.
+		const result = required.workspaceMovePlan
+			? await client.inspectExact(required.agentId, required.routeAuthority)
+			: receipt;
 		checkpoint();
+		if (!("selectionRevision" in result))
+			throw new Error("client_agent_runtime_transition_conflict");
 		if (!agentRuntimeReplacementResultMatches(required, plan, result)) {
 			throw new Error("client_agent_runtime_transition_conflict");
 		}

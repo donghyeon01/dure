@@ -6,7 +6,7 @@ import { collectAgentProjectMove } from "../cli/lib/agent-project-move-command.m
 const plan = () => ({ schemaVersion: 1, operationId: "move-1", idempotencyKey: "request-1",
   source: { agentId: "agent-1", providerId: "codex", revision: 7 }, targetInteractionProfile: "native_cli",
   providerConversationRef: "conversation-1", sourceStopPolicy: { preserve_observed: { runtimeRevision: 3, observedThroughOutputSeq: 9 } },
-  workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { projectId: "old", rootPath: "/old" },
+  workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { workspaceId: "workspace-1", projectId: "old", rootPath: "/old" },
     targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "new-workspace", rootPath: "/new" } } });
 const receipt = () => ({ schemaVersion: 1, receipt: { agentId: "agent-1", providerId: "codex", selectionRevision: 8,
   providerConversationRef: "conversation-1", authority: { authority: { runtimeWorkspaceId: "new-workspace" } } } });

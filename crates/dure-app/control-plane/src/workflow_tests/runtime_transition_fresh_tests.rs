@@ -352,6 +352,7 @@ async fn exercise_no_recipe_native_source(
             agent_id: agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             expected_source_revision: discard_requested.then_some(1),
+            expected_operation_id: None,
             source_stop_policy,
             target_execution_profile: None,
             target_launch_selection: None,

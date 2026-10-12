@@ -184,6 +184,7 @@ async fn ensure_late_conversation(bound_conversation: Option<&str>) {
         agent_id: agent_id.clone(),
         target_interaction_profile: AgentInteractionProfileV1::NativeCli,
         expected_source_revision: Some(1),
+        expected_operation_id: None,
         source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
         target_execution_profile: None,
         target_launch_selection: Some(dure_app::AgentRuntimeLaunchSelectionV1 {

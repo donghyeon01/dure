@@ -333,6 +333,7 @@ async fn reopened_backend_resumes_after_committed_switch_without_launching_again
             agent_id: agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             expected_source_revision: Some(record.source_selection_revision),
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
             target_execution_profile: Some(record.target.as_ref().unwrap().execution_profile()),
             target_launch_selection: None,

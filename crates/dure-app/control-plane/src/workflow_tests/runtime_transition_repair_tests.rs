@@ -50,6 +50,7 @@ async fn explicit_transition_replaces_failed_target(change_model: bool) {
         schema_version: 1,
         agent_id: agent_id.clone(),
         expected_source_revision: Some(parked.intent.source.revision),
+        expected_operation_id: None,
         target_interaction_profile: parked.intent.target_interaction_profile,
         source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
         target_execution_profile: Some(parked.intent.target_execution_profile.clone()),
@@ -182,6 +183,7 @@ async fn stale_discard_revision_is_rejected_before_source_stop() {
             agent_id: source.agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             expected_source_revision,
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Discard,
             target_execution_profile: None,
             target_launch_selection: target_launch_selection.clone(),
@@ -1125,4 +1127,138 @@ async fn repair_retry_drives_an_admitted_transition_and_surfaces_the_drive_error
             .state,
         AgentRuntimeTransitionStateV1::SourceStopped,
     );
+}
+
+#[tokio::test]
+async fn replacement_fences_the_exact_failed_operation_at_an_unchanged_selection_revision() {
+    let (_root, mut state, _, _) = fixture(Vec::new()).await;
+    state.agent_providers =
+        Arc::new(provider_extension::test_codex_structured_agent_provider_registry());
+    let (agent_id, provider_id, operation_id) =
+        admit_structured_credential_transition(&state).await;
+    let stop_count = Arc::new(AtomicUsize::new(0));
+    let open_count = Arc::new(AtomicUsize::new(0));
+    let mut runtimes = structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+    runtimes.register(provider_id, Arc::new(RepairableReplacementRuntime {
+        store: Arc::clone(&state.store),
+        stop_count: Arc::clone(&stop_count),
+        open_count: Arc::clone(&open_count),
+        first_failure_kind: structured_provider_runtime::StructuredProviderRuntimeErrorKindV1::CredentialUnavailable,
+        second_failure_kind: Some(structured_provider_runtime::StructuredProviderRuntimeErrorKindV1::CredentialUnavailable),
+        succeed_on_retry: true,
+    })).unwrap();
+    state.structured_runtimes = Arc::new(runtimes);
+    let admitted = state
+        .store
+        .agent_runtime_transition(&operation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        agent_runtime_transition_apply::drive_locked(&state, admitted)
+            .await
+            .unwrap(),
+        agent_runtime_transition_apply::TransitionDriveOutcome::RepairRequired
+    ));
+    let parked = state
+        .store
+        .agent_runtime_transition(&operation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let body = agent_runtime_transition_apply::AgentRuntimeTransitionApplyBodyV1 {
+        schema_version: 1,
+        agent_id: agent_id.clone(),
+        expected_source_revision: Some(parked.intent.source.revision),
+        expected_operation_id: Some(operation_id.clone()),
+        target_interaction_profile: parked.intent.target_interaction_profile,
+        source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
+        target_execution_profile: Some(parked.intent.target_execution_profile.clone()),
+        target_launch_selection: None,
+    };
+    // A different client wins and its successor also fails before selection advances.
+    assert_eq!(
+        agent_runtime_transition_apply::apply(&state, "winning-repair", body.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "agent_runtime_repair_required"
+    );
+    let successor = state
+        .store
+        .active_agent_runtime_transition(&agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        successor.state,
+        AgentRuntimeTransitionStateV1::RepairRequired
+    );
+    assert_eq!(
+        successor.intent.source.revision,
+        parked.intent.source.revision
+    );
+    assert_eq!(
+        agent_runtime_transition_apply::apply(&state, "stale-repair", body.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "agent_runtime_transition_conflict"
+    );
+    assert_eq!(open_count.load(Ordering::SeqCst), 2);
+    assert_eq!(stop_count.load(Ordering::SeqCst), 1);
+    let mut corrected = body.clone();
+    corrected.expected_operation_id = Some(successor.intent.operation_id.clone());
+    let receipt =
+        agent_runtime_transition_apply::apply(&state, "current-repair", corrected.clone())
+            .await
+            .unwrap();
+    let receipt = serde_json::to_value(receipt).unwrap();
+    assert_eq!(
+        receipt["selectionRevision"],
+        parked.intent.source.revision + 1
+    );
+    assert_eq!(
+        receipt["transitionLineage"]["predecessorOperationId"],
+        successor.intent.operation_id.as_str()
+    );
+    let selection = state
+        .store
+        .agent_runtime_selection(&agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        receipt["transitionLineage"]["operationId"],
+        selection.selected_by_operation_id.unwrap().as_str()
+    );
+    let replay = agent_runtime_transition_apply::apply(&state, "current-repair", corrected)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(replay).unwrap(), receipt);
+    // A later reader reconstructs lineage from SQLite, without the original response.
+    let observed = agent_runtime_transition_apply::inspect_projection(
+        &state,
+        agent_runtime_transition_apply::AgentRuntimeInspectBodyV1 {
+            schema_version: 1,
+            agent_id: agent_id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let observed = serde_json::to_value(observed).unwrap();
+    assert_eq!(observed["state"], "stable");
+    assert_eq!(
+        observed["receipt"]["transitionLineage"],
+        receipt["transitionLineage"]
+    );
+    // Reusing a transport identity with a different predecessor is never a replay.
+    assert_eq!(
+        agent_runtime_transition_apply::apply(&state, "current-repair", body)
+            .await
+            .unwrap_err()
+            .code,
+        "agent_runtime_transition_idempotency_conflict"
+    );
+    assert_eq!(open_count.load(Ordering::SeqCst), 3);
 }

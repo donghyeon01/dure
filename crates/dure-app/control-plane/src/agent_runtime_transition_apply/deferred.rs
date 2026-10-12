@@ -142,6 +142,7 @@ pub(crate) async fn hibernate(
         schema_version: body.schema_version,
         agent_id: body.agent_id.clone(),
         expected_source_revision: Some(body.expected_source_revision),
+        expected_operation_id: None,
         source_stop_policy,
         target_interaction_profile: source.interaction_profile,
         target_execution_profile,

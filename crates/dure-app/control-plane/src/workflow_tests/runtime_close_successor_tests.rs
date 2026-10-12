@@ -40,6 +40,7 @@ async fn stopped_close_successors_remain_visible_and_replay_without_launching_ag
         agent_id: agent_id.clone(),
         target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         expected_source_revision: Some(1),
+        expected_operation_id: None,
         source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
         target_execution_profile: None,
         target_launch_selection: None,

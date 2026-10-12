@@ -58,8 +58,9 @@ export function withAgentRuntimeProjectionContext(
 	if (!sameDureBackendRouteAuthority(result.routeAuthority, routeAuthority)) {
 		throw new Error("client_agent_runtime_transition_conflict");
 	}
-	return projectionContext
-		? { ...result, routeAuthority, projectionContext }
+	const context = result.projectionContext ?? projectionContext;
+	return context
+		? { ...result, routeAuthority, projectionContext: context }
 		: result;
 }
 

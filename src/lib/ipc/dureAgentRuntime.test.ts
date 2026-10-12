@@ -716,7 +716,7 @@ describe("Dure Agent runtime client", () => {
 	it.each([false, true])("validates the persisted move plan against exact repair identity (foreign=%s)", async foreign => {
 		const source = envelope();
 		const identity = { schemaVersion: 1, agentId: "agent-1", operationId: "runtime-transition-1", journalRevision: 1, targetInteractionProfile: "native_cli", targetExecutionProfile: source.result.receipt.executionProfile };
-		const plan = { schemaVersion: 1, operationId: foreign ? "other" : identity.operationId, idempotencyKey: "request-1", source: { agentId: "agent-1", providerId: "codex", revision: source.result.receipt.selectionRevision }, targetInteractionProfile: "native_cli", providerConversationRef: "conversation-1", workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { projectId: "old", rootPath: "/old" }, targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "move-workspace", rootPath: "/new" } } };
+		const plan = { schemaVersion: 1, operationId: foreign ? "other" : identity.operationId, idempotencyKey: "request-1", source: { agentId: "agent-1", providerId: "codex", revision: source.result.receipt.selectionRevision }, targetInteractionProfile: "native_cli", providerConversationRef: "conversation-1", workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { workspaceId: "workspace-1", projectId: "old", rootPath: "/old" }, targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "move-workspace", rootPath: "/new" } } };
 		const invokeCommand = vi.fn().mockResolvedValueOnce({ ...source, result: { ...identity, state: "transitioning", stage: "admitted", projectionContext: projectionContext() } })
 			.mockResolvedValueOnce({ ...source, result: { ...identity, state: "admitted", ...transitionInspectionWireFields(source), workspaceMovePlan: plan } });
 		const client = createDureAgentRuntimeClient({ invokeCommand });
@@ -1407,3 +1407,62 @@ describe("Dure Agent runtime client", () => {
 		expect(invokeCommand).not.toHaveBeenCalled();
 	});
 });
+
+it("carries the exact predecessor fence and committed repair lineage across IPC", async () => {
+	const source = envelope();
+	const transitionLineage = {
+		operationId: "repair-1",
+		predecessorOperationId: "move-1",
+	};
+	const invokeCommand = vi.fn().mockResolvedValue({
+		...source,
+		result: {
+			...source.result,
+			receipt: { ...source.result.receipt, transitionLineage },
+		},
+	});
+	const result = await createDureAgentRuntimeClient({
+		invokeCommand,
+	}).transition({
+		agentId: "agent-1",
+		targetInteractionProfile: "structured_protocol",
+		expectedSourceRevision: 1,
+		expectedOperationId: "move-1",
+		routeAuthority: source.routeAuthority,
+	});
+	expect(invokeCommand).toHaveBeenCalledWith(
+		"dure_backend_request",
+		expect.objectContaining({
+			body: expect.objectContaining({
+				expectedSourceRevision: 1,
+				expectedOperationId: "move-1",
+			}),
+		}),
+	);
+	expect(result.transitionLineage).toEqual(transitionLineage);
+});
+
+it.each([
+	null,
+	{ operationId: "repair-1", predecessorOperationId: "repair-1" },
+	{ operationId: "repair-1", predecessorOperationId: "../move" },
+])(
+	"refuses malformed optional receipt lineage %j",
+	async (transitionLineage) => {
+		const source = envelope();
+		const invokeCommand = vi.fn().mockResolvedValue({
+			...source,
+			result: {
+				...source.result,
+				receipt: { ...source.result.receipt, transitionLineage },
+			},
+		});
+		await expect(
+			createDureAgentRuntimeClient({ invokeCommand }).transition({
+				agentId: "agent-1",
+				targetInteractionProfile: "structured_protocol",
+				routeAuthority: source.routeAuthority,
+			}),
+		).rejects.toThrow();
+	},
+);

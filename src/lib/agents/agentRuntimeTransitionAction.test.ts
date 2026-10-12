@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRuntimeProjectionContext } from "@/test/dureAgentRuntimeFixtures";
 
 const mocks = vi.hoisted(() => ({
 	inspect: vi.fn(),
@@ -175,7 +176,11 @@ describe("project move uses shared repair reconciliation", () => {
 		providerConversationRef: "conversation-1",
 		workspaceMove: {
 			sourceAgent: { agentId: "agent-1" },
-			sourceWorkspace: { rootPath: "/repo/.worktrees/agent-1" },
+			sourceWorkspace: {
+				workspaceId: "workspace-1",
+				projectId: "project-1",
+				rootPath: "/repo/.worktrees/agent-1",
+			},
 			targetProject: { projectId: "project-2" },
 			targetWorkspace: {
 				workspaceId: "move-workspace",
@@ -216,6 +221,14 @@ describe("project move uses shared repair reconciliation", () => {
 			sessionId: "session-2",
 			workspaceId: "workspace-1",
 			launchIdempotencyKey: "repair-key",
+			transitionLineage: {
+				operationId: "repair-1",
+				predecessorOperationId: movePlan.operationId,
+			},
+			projectionContext: {
+				...agentRuntimeProjectionContext("agent-1", "codex"),
+				workspace: movePlan.workspaceMove.sourceWorkspace,
+			},
 			stopFence: {
 				runnerPrincipal: "principal",
 				runnerInstance: "runner",

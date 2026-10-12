@@ -57,6 +57,9 @@ pub(crate) struct AgentRuntimeTransitionApplyBodyV1 {
     pub(crate) target_interaction_profile: AgentInteractionProfileV1,
     #[serde(default)]
     pub(crate) expected_source_revision: Option<i64>,
+    /// The exact journal being replaced, checked while holding the agent lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_operation_id: Option<OperationIdV1>,
     #[serde(default)]
     pub(crate) source_stop_policy: AgentRuntimeSourceStopPolicyV1,
     #[serde(default)]
@@ -126,6 +129,16 @@ pub(crate) struct AgentRuntimeTransitionApplyReceiptV1 {
     provider_conversation_ref: Option<String>,
     authority: AgentRuntimeBindingAuthorityV1,
     launch_idempotency_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transition_lineage: Option<AgentRuntimeTransitionLineageV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentRuntimeTransitionLineageV1 {
+    operation_id: OperationIdV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    predecessor_operation_id: Option<OperationIdV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -640,6 +653,10 @@ fn runtime_receipt(
         provider_conversation_ref,
         authority: authority.clone(),
         launch_idempotency_key,
+        transition_lineage: transition.map(|record| AgentRuntimeTransitionLineageV1 {
+            operation_id: record.intent.operation_id.clone(),
+            predecessor_operation_id: record.predecessor_operation_id.clone(),
+        }),
     })
 }
 

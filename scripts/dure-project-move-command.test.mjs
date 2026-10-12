@@ -15,7 +15,7 @@ function fixture() {
   const plan = { schemaVersion: 1, operationId: "move-1", idempotencyKey: "request-1",
     source: { agentId: "agent-1", providerId: "codex", revision: 7 }, targetInteractionProfile: "native_cli",
     providerConversationRef: "conversation-1", workspaceMove: {
-      sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { projectId: "old", rootPath: "/old" },
+      sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { workspaceId: "workspace-1", projectId: "old", rootPath: "/old" },
       targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "new-workspace", rootPath: "/new" } } };
   const backend = { profile: { id: "remote-owner", transport: { kind: "ssh" } } };
   const requestBackend = vi.fn(async (_, request) => ({ result: request.operation.endsWith("preview.v1")

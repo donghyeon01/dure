@@ -79,7 +79,11 @@ const plan = () => ({
 	providerConversationRef: "conversation-1",
 	workspaceMove: {
 		sourceAgent: { agentId: "agent-1" },
-		sourceWorkspace: { projectId: "old", rootPath: "/old" },
+		sourceWorkspace: {
+			workspaceId: "workspace-1",
+			projectId: "old",
+			rootPath: "/old",
+		},
 		targetProject: { projectId: "new" },
 		targetWorkspace: {
 			projectId: "new",

@@ -59,15 +59,22 @@ export interface RuntimeTransitionIntent<ExecutionProfile = unknown> {
   readonly agentId: string;
   readonly targetInteractionProfile: RuntimeInteractionProfile;
   readonly expectedSourceRevision?: number;
+  readonly expectedOperationId?: string;
   readonly sourceStopPolicy?: RuntimeSourceStopPolicy;
   readonly targetExecutionProfile?: ExecutionProfile;
   readonly targetLaunchSelection?: RuntimeLaunchSelectionTarget;
+}
+
+export interface RuntimeTransitionLineageV1 {
+  readonly operationId: string;
+  readonly predecessorOperationId?: string;
 }
 
 export interface RuntimeReceiptEnvelope extends Record<string, unknown> {
   schemaVersion: 1;
   agentId: string;
   selectionRevision: number;
+  transitionLineage?: RuntimeTransitionLineageV1;
 }
 
 export interface RuntimeTransitionEnvelope extends Record<string, unknown> {

@@ -33,6 +33,15 @@ pub(super) async fn load_or_admit_with_activation(
     activation: TargetActivation,
 ) -> Result<AdmissionOutcome, crate::BackendDispatchError> {
     let observed = crate::agent_runtime_projection::read_locked(state, &body.agent_id).await?;
+    if let Some(expected) = &body.expected_operation_id {
+        if !matches!(&observed,
+            crate::agent_runtime_projection::AgentRuntimeObservedV1::Transitioning { transition, .. }
+                if transition.intent.operation_id == *expected
+                    && transition.state == AgentRuntimeTransitionStateV1::RepairRequired)
+        {
+            return Err("agent_runtime_transition_conflict".into());
+        }
+    }
     let observed = match observed {
         crate::agent_runtime_projection::AgentRuntimeObservedV1::Transitioning {
             transition,
@@ -362,7 +371,11 @@ pub(super) fn validate_replay(
         || transition.intent.target_execution_profile == transition.intent.source.execution_profile,
         |target| transition.intent.target_execution_profile == *target,
     );
-    if transition.intent.operation_id != *operation_id
+    if body
+        .expected_operation_id
+        .as_ref()
+        .is_some_and(|expected| transition.predecessor_operation_id.as_ref() != Some(expected))
+        || transition.intent.operation_id != *operation_id
         || transition.intent.source.agent_id != body.agent_id
         || transition.intent.target_interaction_profile != body.target_interaction_profile
         || (transition.predecessor_operation_id.is_none()

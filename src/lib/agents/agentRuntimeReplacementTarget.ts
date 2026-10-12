@@ -11,6 +11,7 @@ import type {
 } from "@/lib/ipc/dureAgentRuntime";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { sameDureBackendRouteAuthority } from "@/lib/ipc/dureBackendRoute";
+import type { AgentProjectMovePlan } from "../../../cli/lib/contracts/agent-project-move.mjs";
 
 export type AgentRuntimeRepairExecutionTargetV1 =
 	| {
@@ -184,6 +185,8 @@ export function agentRuntimeReplacementResultMatches(
 	result: DureAgentRuntimeTransitionResultV1,
 ): boolean {
 	return (
+		(!required.workspaceMovePlan ||
+			agentRuntimeWorkspaceRepairMatches(required.workspaceMovePlan, result)) &&
 		result.agentId === required.agentId &&
 		result.selectionRevision > required.sourceSelectionRevision &&
 		sameDureBackendRouteAuthority(
@@ -196,5 +199,25 @@ export function agentRuntimeReplacementResultMatches(
 			plan.target.executionProfile,
 		) &&
 		sameLaunchSelection(result.launchSelection, plan.target.launchSelection)
+	);
+}
+
+/** A restored folder alone cannot prove which stopped operation was repaired. */
+export function agentRuntimeWorkspaceRepairMatches(
+	plan: AgentProjectMovePlan,
+	result: DureAgentRuntimeTransitionResultV1,
+): boolean {
+	const workspace = result.projectionContext?.workspace;
+	return (
+		result.agentId === plan.source.agentId &&
+		result.providerId === plan.source.providerId &&
+		result.interactionProfile === plan.targetInteractionProfile &&
+		result.providerConversationRef === plan.providerConversationRef &&
+		result.selectionRevision === plan.source.revision + 1 &&
+		result.transitionLineage?.predecessorOperationId === plan.operationId &&
+		result.transitionLineage.operationId !== plan.operationId &&
+		workspace?.workspaceId === plan.workspaceMove.sourceWorkspace.workspaceId &&
+		workspace?.projectId === plan.workspaceMove.sourceWorkspace.projectId &&
+		workspace?.rootPath === plan.workspaceMove.sourceWorkspace.rootPath
 	);
 }

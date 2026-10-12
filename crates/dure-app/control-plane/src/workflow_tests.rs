@@ -2976,6 +2976,7 @@ async fn native_credential_replacement_persists_the_advanced_successor_and_journ
         agent_id: agent_id.clone(),
         target_interaction_profile: AgentInteractionProfileV1::NativeCli,
         expected_source_revision: None,
+        expected_operation_id: None,
         source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
         target_execution_profile: Some(AgentExecutionProfileV1::CredentialReference {
             reference_id: registered.reference_id.clone(),
@@ -3533,6 +3534,7 @@ async fn native_transition_converges_a_missing_conversation_from_exact_hmux_iden
             agent_id: agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             expected_source_revision: None,
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
             target_execution_profile: None,
             target_launch_selection: None,

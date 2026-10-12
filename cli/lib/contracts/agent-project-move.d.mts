@@ -7,7 +7,7 @@ export interface AgentProjectMovePlan {
   readonly targetInteractionProfile: "native_cli";
   readonly workspaceMove: {
     readonly sourceAgent: { readonly agentId: string };
-    readonly sourceWorkspace: { readonly projectId: string; readonly rootPath: string };
+    readonly sourceWorkspace: { readonly workspaceId: string; readonly projectId: string; readonly rootPath: string };
     readonly targetProject: { readonly projectId: string };
     readonly targetWorkspace: { readonly projectId: string; readonly workspaceId: string; readonly rootPath: string };
     readonly sourceCheckout?: unknown;

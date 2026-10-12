@@ -10,6 +10,7 @@ async fn unchanged_request_replay_cannot_retarget_after_credential_or_profile_ch
             agent_id: source.agent_id.clone(),
             target_interaction_profile: source.interaction_profile,
             expected_source_revision: None,
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
             target_execution_profile: None,
             target_launch_selection: None,

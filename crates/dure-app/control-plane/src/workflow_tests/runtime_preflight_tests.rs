@@ -130,6 +130,7 @@ async fn incompatible_structured_target_is_rejected_before_admission_or_effects(
             agent_id: agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             expected_source_revision: None,
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
             target_execution_profile: None,
             target_launch_selection: Some(dure_app::AgentRuntimeLaunchSelectionV1 {
@@ -229,6 +230,7 @@ async fn pi_unsupported_permission_preserves_source_before_any_effect() {
                 agent_id: agent_id.clone(),
                 target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
                 expected_source_revision: Some(source.revision),
+                expected_operation_id: None,
                 source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
                 target_execution_profile: None,
                 target_launch_selection: Some(dure_app::AgentRuntimeLaunchSelectionV1 {

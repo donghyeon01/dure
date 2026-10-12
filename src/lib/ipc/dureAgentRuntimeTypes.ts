@@ -14,6 +14,7 @@ import type {
 	RuntimeLaunchSelectionTarget,
 	RuntimeProjectionContextV1,
 	RuntimeSourceStopPolicy,
+	RuntimeTransitionLineageV1,
 } from "../../../cli/lib/contracts/agent-runtime.mjs";
 
 export type AgentRuntimeInteractionProfileV1 = RuntimeInteractionProfile;
@@ -66,6 +67,8 @@ export type DureAgentRuntimeTransitionResultV1 =
 		backendProfileId: string;
 		routeAuthority: DureBackendRouteAuthorityV1;
 		selectionRevision: number;
+		transitionLineage?: RuntimeTransitionLineageV1;
+		projectionContext?: DureAgentRuntimeProjectionContextV1;
 	};
 
 type AgentRuntimeTransitionStageV1 =

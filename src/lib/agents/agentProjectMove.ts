@@ -1,3 +1,4 @@
+import { agentRuntimeWorkspaceRepairMatches } from "@/lib/agents/agentRuntimeReplacementTarget";
 import { projectAgentRuntimeTransition } from "@/lib/agents/agentRuntimeStoreProjector";
 import {
 	observeAgentRuntimeAction,
@@ -141,7 +142,11 @@ export async function prepareAgentProjectMove(agentId: string) {
 		},
 		async status(plan: AgentProjectMovePlan) {
 			const observed = await inspect();
-			if (isCompleted(plan, observed) && observed.state === "stable") {
+			if (
+				observed.state === "stable" &&
+				(isCompleted(plan, observed) ||
+					agentRuntimeWorkspaceRepairMatches(plan, observed))
+			) {
 				projectAgentRuntimeTransition(agentId, observed);
 				return "completed" as const;
 			}

@@ -899,6 +899,7 @@ async fn credential_transition_restarts_a_terminally_stopped_native_source() {
             agent_id: agent_id.clone(),
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             expected_source_revision: None,
+            expected_operation_id: None,
             source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
             target_execution_profile: Some(AgentExecutionProfileV1::CredentialReference {
                 reference_id: "account-b".into(),

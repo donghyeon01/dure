@@ -83,7 +83,13 @@ function receiptEnvelope(value, agentId) {
     value.schemaVersion === 1 &&
     value.agentId === agentId &&
     Number.isSafeInteger(value.selectionRevision) &&
-    value.selectionRevision > 0
+    value.selectionRevision > 0 &&
+    (value.transitionLineage === undefined ||
+      (record(value.transitionLineage) &&
+        isDureDomainIdV1(value.transitionLineage.operationId) &&
+        (value.transitionLineage.predecessorOperationId === undefined ||
+          (isDureDomainIdV1(value.transitionLineage.predecessorOperationId) &&
+            value.transitionLineage.predecessorOperationId !== value.transitionLineage.operationId))))
   );
 }
 
@@ -214,6 +220,7 @@ export function agentRuntimeTransitionBody({
   agentId,
   targetInteractionProfile,
   expectedSourceRevision,
+  expectedOperationId,
   sourceStopPolicy = "preserve",
   targetExecutionProfile,
   targetLaunchSelection,
@@ -223,6 +230,7 @@ export function agentRuntimeTransitionBody({
     agentId,
     targetInteractionProfile,
     ...(expectedSourceRevision === undefined ? {} : { expectedSourceRevision }),
+    ...(expectedOperationId === undefined ? {} : { expectedOperationId }),
     ...(sourceStopPolicy === "preserve" ? {} : { sourceStopPolicy }),
     ...(targetExecutionProfile === undefined ? {} : { targetExecutionProfile }),
     ...(targetLaunchSelection === undefined

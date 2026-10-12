@@ -188,6 +188,7 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
                 agent_id: agent_id.clone(),
                 target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
                 expected_source_revision: Some(record.source_selection_revision),
+                expected_operation_id: None,
                 source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
                 target_execution_profile: Some(target.execution_profile()),
                 target_launch_selection: None,

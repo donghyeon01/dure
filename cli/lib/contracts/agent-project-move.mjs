@@ -15,6 +15,7 @@ export function isAgentProjectMovePlan(plan, agentId, projectId) {
     ["codex", "claude"].includes(plan.source.providerId) && plan.targetInteractionProfile === "native_cli" &&
     typeof plan.providerConversationRef === "string" && plan.providerConversationRef.length > 0 &&
     move?.sourceAgent?.agentId === agentId &&
+    isDureDomainIdV1(move.sourceWorkspace?.workspaceId) && isDureDomainIdV1(move.sourceWorkspace?.projectId) &&
     typeof move.sourceWorkspace?.rootPath === "string" && move.sourceWorkspace.rootPath.length > 0 &&
     move.targetProject?.projectId === projectId &&
     move.targetWorkspace?.projectId === projectId && isDureDomainIdV1(move.targetWorkspace.workspaceId) &&

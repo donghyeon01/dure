@@ -368,6 +368,9 @@ function parseRuntimeReceipt(
 		routeAuthority,
 		agentId: expectedAgentId,
 		selectionRevision: receipt.selectionRevision,
+		...(receipt.transitionLineage
+			? { transitionLineage: receipt.transitionLineage }
+			: {}),
 		providerId: receipt.providerId,
 		executionProfile,
 		providerConversationRef: receipt.providerConversationRef,
@@ -818,6 +821,7 @@ export function createDureAgentRuntimeClient(options?: {
 			agentId,
 			targetInteractionProfile,
 			expectedSourceRevision,
+			expectedOperationId,
 			targetExecutionProfile,
 			targetLaunchSelection,
 			sourceStopPolicy = "preserve",
@@ -827,6 +831,8 @@ export function createDureAgentRuntimeClient(options?: {
 				!isDureDomainIdV1(agentId) ||
 				(expectedSourceRevision !== undefined &&
 					!positiveInteger(expectedSourceRevision)) ||
+				(expectedOperationId !== undefined &&
+					!isDureDomainIdV1(expectedOperationId)) ||
 				routeAuthority.profileId !== backendProfileId
 			) {
 				throw contractError();
@@ -855,6 +861,7 @@ export function createDureAgentRuntimeClient(options?: {
 					agentId,
 					targetInteractionProfile,
 					expectedSourceRevision,
+					expectedOperationId,
 					sourceStopPolicy,
 					targetExecutionProfile,
 					targetLaunchSelection,
