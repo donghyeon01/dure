@@ -35,7 +35,8 @@ describe("conversation project move command", () => {
       const remote = installRemoteBackendFixture(root, [], {
         capabilities: ["agent_runtime.transition"],
         results: { "agent_runtime.transition": { schemaVersion: 1,
-          receipt: { ...nativeRuntimeReceipt({ kind: "credential_reference", reference_id: "retained-account", credential_generation: "generation-1" }, 8, "repair-1"), providerId: "codex" } } },
+          receipt: { ...nativeRuntimeReceipt({ kind: "credential_reference", reference_id: "retained-account", credential_generation: "generation-1" }, 8, "repair-1"), providerId: "codex",
+            transitionLineage: { operationId: "repair-1", predecessorOperationId: "move-1" } } } },
       });
       const run = spawnSync(process.execPath, [fileURLToPath(new URL("../cli/dure.mjs", import.meta.url)),
         ...preview.continuation.rollback], {
@@ -54,12 +55,34 @@ describe("conversation project move command", () => {
       const requests = readFileSync(remote.requestLog, "utf8").trim().split("\n").map(JSON.parse);
       const transition = requests.find((request) => request.operation === "agent_runtime.transition");
       expect(transition).toMatchObject({ requestId: "rollback-request-1", body: {
-        schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: "native_cli", expectedSourceRevision: 7,
+        schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: "native_cli", expectedSourceRevision: 7, expectedOperationId: "move-1",
       } });
       expect(transition.body).not.toHaveProperty("targetExecutionProfile");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+  it.each([undefined, { operationId: "repair-1", predecessorOperationId: "another-move" }])(
+    "does not confirm a repair without its exact predecessor: %j", async (transitionLineage) => {
+      const requestBackend = vi.fn(async () => ({ result: { schemaVersion: 1,
+        receipt: { ...nativeRuntimeReceipt({ kind: "provider_default" }, 8, "repair-1"), transitionLineage } } }));
+      const result = await collectAgentRuntimeCommand({ args: ["switch", "agent-1", "terminal"],
+        expectedRevision: 7, expectedOperationId: "move-1", resolveBackend: async () => fixture().backend, requestBackend });
+      expect(result).toMatchObject({ ok: false, error: { code: "runtime_response_invalid" } });
+      expect(requestBackend).toHaveBeenCalledOnce();
+    },
+  );
+  it.each([
+    { args: ["get", "agent-1"], expectedRevision: 7, expectedOperationId: "move-1" },
+    { args: ["switch", "agent-1", "terminal"], expectedOperationId: "move-1" },
+    { args: ["switch", "agent-1", "terminal"], expectedRevision: 7, expectedOperationId: "" },
+    { args: ["switch", "agent-1", "terminal"], expectedRevision: 7, expectedOperationId: "bad operation" },
+  ])("refuses malformed repair identity before backend access: %j", async (options) => {
+    const resolveBackend = vi.fn();
+    expect(await collectAgentRuntimeCommand({ ...options, resolveBackend })).toMatchObject({
+      ok: false, error: { code: "runtime_command_invalid" },
+    });
+    expect(resolveBackend).not.toHaveBeenCalled();
   });
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
     "refuses an invalid repair revision %s before backend access", async (expectedRevision) => {

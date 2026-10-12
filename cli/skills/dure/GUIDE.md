@@ -252,6 +252,12 @@ can use the returned rollback command to resume in its source folder through the
 same journal. Inspect status first after any uncertain response. Pane placement
 in another Space remains independent of the provider's working directory.
 
+Keep both `--expected-revision` and `--expected-operation-id` in the returned
+repair command. They bind repair to the exact failed move even if another client
+creates a failed successor without advancing the source revision. Reuse its
+idempotency key after response loss. If an older backend refuses the operation
+fence, update that backend instead of removing the flag.
+
 Keep the returned status/retry commands if a response is uncertain. Inspect first,
 then retry the exact request instead of repeating a name-based resume. Wake must
 retain its operation ID, journal revision and idempotency key; no separate publish

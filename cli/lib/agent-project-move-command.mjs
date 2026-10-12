@@ -31,6 +31,7 @@ export async function collectAgentProjectMove({ agentId, projectId, movePlan, co
     const apply = ["runs", "move", agentId, "--project", projectId, "--move-plan", encoded, "--confirm-restart", "--backend", backend.profile.id, "--json"];
     prepared = { ...base, ok: true, state: "preview", plan, continuation: {
       apply, retry: [...apply], rollback: ["runtime", "switch", agentId, "terminal", "--expected-revision", String(plan.source.revision),
+        "--expected-operation-id", plan.operationId,
         "--idempotency-key", `rollback-${plan.idempotencyKey}`, "--backend", backend.profile.id, "--json"], status: ["runtime", "get", agentId, "--backend", backend.profile.id, "--json"],
     } };
     if (!confirmRestart) return prepared;

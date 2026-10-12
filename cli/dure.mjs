@@ -3962,6 +3962,7 @@ async function main() {
       operationId: opts.operationId,
       conversationId: opts.conversationId,
       account: opts.account,
+      expectedOperationId: opts.expectedOperationId,
       credentialGeneration: opts.credentialGeneration,
       ...(opts.expectedRevision === undefined ? {} : { expectedRevision: Number(opts.expectedRevision) }),
       ...(opts.deadlineMs === undefined ? {} : { deadlineMs: Number(opts.deadlineMs) }),

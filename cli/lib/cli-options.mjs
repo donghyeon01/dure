@@ -96,6 +96,7 @@ export function parseOpts(args) {
     else if (a === "--cron") opts.cron = args[++i];
     else if (a === "--timezone") opts.timezone = args[++i];
     else if (a === "--expected-revision") opts.expectedRevision = args[++i];
+    else if (a === "--expected-operation-id") opts.expectedOperationId = args[++i] ?? "";
     else if (a === "--disabled") opts.disabled = true;
     else if (a === "--reuse" || a === "--reuse-session") opts.reuse = true;
     else if (a === "--app") opts.app = args[++i];

@@ -21,6 +21,7 @@ export const RUNTIME_HELP = `Usage:
   dure runtime get <agent-id> [--backend ID] [--json]
   dure runtime switch <agent-id> chat|terminal [--backend ID] [--json]
     [--idempotency-key KEY] [--deadline-ms MS] [--expected-revision N]
+    [--expected-operation-id ID]
     [--account ACCOUNT_ID|default [--credential-generation ID]]
   dure runtime hibernate <agent-id> --expected-revision N [--backend ID] [--json]
   dure runtime wake <agent-id> --operation-id ID --expected-revision N
@@ -46,7 +47,10 @@ conversation on the same backend. Claude requires CLI 2.1.223–2.1.284 and exac
 Original checkout ownership is retained. Keep the exact Apply command for retries;
 structured project moves and unobservable sources remain unsupported.
 Switch --expected-revision fences the observed source without changing its
-account. Project-move repair commands use it to resume in the source folder.
+account. With --expected-operation-id, it replaces only that exact failed
+operation and requires --expected-revision. Project-move repair commands retain
+both values to resume in the source folder, including after response loss.
+If an older backend refuses this fence, update that backend; do not drop the flag.
 An explicit --account changes credentials through that same transition. A named
 account requires its exact --credential-generation; default requires none.
 Both account selections require --expected-revision.
@@ -71,6 +75,7 @@ export async function collectAgentRuntimeCommand({
   requestId = randomUUID(),
   deadlineMs = 45_000,
   expectedRevision,
+  expectedOperationId,
   operationId,
   conversationId,
   account,
@@ -112,6 +117,9 @@ export async function collectAgentRuntimeCommand({
     (!lifecycle && (operationId !== undefined || (!idleConfigure && action !== "switch" && expectedRevision !== undefined))) ||
     (action === "switch" && expectedRevision !== undefined &&
       (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) ||
+    (expectedOperationId !== undefined &&
+      (action !== "switch" || !isDureDomainIdV1(expectedOperationId) ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) ||
     (account !== undefined && !accountSwitch) ||
     (accountSwitch && (!isDureDomainIdV1(account) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
       (account === "default" ? credentialGeneration !== undefined : !isDureDomainIdV1(credentialGeneration)))) ||
@@ -142,6 +150,7 @@ export async function collectAgentRuntimeCommand({
               agentId,
               targetInteractionProfile: PROFILES[target],
               expectedSourceRevision: expectedRevision,
+              expectedOperationId,
               ...(accountSwitch ? { targetExecutionProfile } : {}),
             })
           : idleBody ?? lifecycleBody ?? (idle ? { schemaVersion: 1 } : { schemaVersion: 1, agentId }),
@@ -151,7 +160,11 @@ export async function collectAgentRuntimeCommand({
     const result = idle ? parseAgentRuntimeIdleInspection(response.result) : action !== "switch"
       ? parseAgentRuntimeInspectionEnvelope(response.result, agentId)
       : parseAgentRuntimeTransitionEnvelope(response.result, agentId);
-    if (!result || (accountSwitch && (
+    if (!result || (expectedOperationId !== undefined && (
+        result.receipt.transitionLineage?.predecessorOperationId !== expectedOperationId ||
+        result.receipt.authority?.interactionProfile !== PROFILES[target] ||
+        result.receipt.selectionRevision !== expectedRevision + 1
+      )) || (accountSwitch && (
         result.receipt.authority?.interactionProfile !== PROFILES[target] ||
         result.receipt.executionProfile?.kind !== targetExecutionProfile.kind ||
         (account !== "default" && (result.receipt.executionProfile.reference_id !== account ||
