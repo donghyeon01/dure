@@ -50,7 +50,7 @@ export function glyph(source: string, size: number, className?: string): HTMLEle
 export function statusDot(state: RunState): HTMLElement {
   const dot = element("span", `dot dot--${state}`);
   dot.setAttribute("role", "img");
-  dot.setAttribute("aria-label", STATE_LABEL[state]);
+  dot.setAttribute("aria-label", t(STATE_LABEL[state]));
   return dot;
 }
 
@@ -105,11 +105,11 @@ export function paintedBackground(host: HTMLElement): string | undefined {
 }
 
 const STATE_LABEL: Record<RunState, string> = {
-  run: "실행 중",
-  warn: "주의",
-  blocked: "차단됨",
-  done: "종료됨",
-  unknown: "상태를 알 수 없음",
+  run: "session.status.running",
+  warn: "session.status.attention",
+  blocked: "session.status.blocked",
+  done: "common.exited",
+  unknown: "session.status.unknown",
 };
 
 /**

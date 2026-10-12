@@ -1243,6 +1243,19 @@ describe("세션 출력 배선", () => {
     expect(root.querySelector(".session__title")?.textContent).toBe("newer");
   });
 
+  it.each([
+    ["en", "Enable input", "Running"],
+    ["ko", "입력 켜기", "실행 중"],
+  ] as const)("localizes the watch-only action and announcements in %s", async (language, action, status) => {
+    saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language });
+    refuseWritableAttach = true;
+    const root = await openTerminal();
+    expect(document.documentElement.lang).toBe(language);
+    expect(pick(root, ".banner__action").textContent).toBe(action);
+    expect(root.querySelector(".session__state")?.getAttribute("aria-label")).toBe(status);
+    expect(terminalInput(root).disabled).toBe(true);
+  });
+
   /**
    * 관찰로 떨어진 attach는 키를 보내지 않는다.
    *
@@ -2202,7 +2215,7 @@ describe("terminal unavailability", () => {
       const root = await openTerminal();
       const previous = activeAttachmentId!;
       const grid = root.querySelector(".structured-terminal__grid");
-      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe("실행 중");
+      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe(t("session.status.running"));
       type(root, "already sent");
       const oldField = root.querySelector<HTMLTextAreaElement>(".tray__box")!;
       pressReturn(oldField);
@@ -2223,7 +2236,7 @@ describe("terminal unavailability", () => {
       }
       await settle();
       expect(root.querySelector<HTMLTextAreaElement>(".tray__box")?.disabled).toBe(true);
-      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe("상태를 알 수 없음");
+      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe(t("session.status.unknown"));
       expect(root.querySelector(".structured-terminal__grid")).toBe(grid);
       expect(grid?.textContent).toContain("ready");
       expect(root.querySelector(".session .banner")?.textContent).toContain(
@@ -2266,12 +2279,12 @@ describe("terminal unavailability", () => {
       expect(root.querySelector<HTMLTextAreaElement>(".tray__box")?.disabled).toBe(true);
       expect(root.querySelector(".session .banner")).not.toBeNull();
       expect(root.querySelector<HTMLButtonElement>(".session .banner__action")?.disabled).toBe(true);
-      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe("상태를 알 수 없음");
+      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe(t("session.status.unknown"));
       releaseHeldWritableAttach?.("success");
       await settle();
       expect(activeAttachmentId).not.toBe(previous);
       expect(root.querySelector(".session .banner")).toBeNull();
-      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe("실행 중");
+      expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe(t("session.status.running"));
       expect(root.querySelector<HTMLTextAreaElement>(".tray__box")?.disabled).toBe(false);
       expect(sentInputIntents().filter((intent) => intent.case !== "resize")).toEqual(beforeReconnect);
       type(root, "new input after explicit reconnect");
@@ -2292,7 +2305,7 @@ describe("terminal unavailability", () => {
     pendingTerminalReads.get(previous)?.reject({ code: "old_failure", message: "Old read failed" });
     await settle();
     expect(root.querySelector(".session .banner")).toBeNull();
-    expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe("실행 중");
+    expect(root.querySelector(".session__header .session__state")?.getAttribute("aria-label")).toBe(t("session.status.running"));
     oldField.value = "retired attachment input";
     oldField.dispatchEvent(new InputEvent("input", { bubbles: true }));
     pressReturn(oldField);

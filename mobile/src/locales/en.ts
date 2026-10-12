@@ -1,5 +1,11 @@
 /** Canonical English copy. New messages use semantic IDs; legacy source keys remain supported. */
 export const en: Record<string, string> = {
+  "terminal.enableInput": "Enable input",
+  "terminal.reconnectNow": "Reconnect now",
+  "session.status.running": "Running",
+  "session.status.attention": "Needs attention",
+  "session.status.blocked": "Blocked",
+  "session.status.unknown": "Status unknown",
   "workspace.sessions": "Sessions",
   "workspace.selectSession": "Select a session",
   "workspace.selectSessionHint": "Choose a session from the list to open its terminal.",

@@ -1,5 +1,22 @@
-import { describe, expect, it } from "vitest";
-import { paintedBackground } from "./dom";
+import { afterEach, describe, expect, it } from "vitest";
+import { paintedBackground, statusDot } from "./dom";
+import { DEFAULT_SETTINGS_PREFERENCES, saveSettingsPreferences } from "./settingsPreferences";
+
+describe("localized status announcements", () => {
+  afterEach(() => localStorage.clear());
+
+  it("resolves every status in the current language when rendered", () => {
+    for (const [language, labels] of [
+      ["en", ["Running", "Needs attention", "Blocked", "Exited", "Status unknown"]],
+      ["ko", ["실행 중", "주의", "차단됨", "종료됨", "상태를 알 수 없음"]],
+      ["en", ["Running", "Needs attention", "Blocked", "Exited", "Status unknown"]],
+    ] as const) {
+      saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language });
+      expect((["run", "warn", "blocked", "done", "unknown"] as const)
+        .map(state => statusDot(state).getAttribute("aria-label"))).toEqual(labels);
+    }
+  });
+});
 
 /**
  * 터미널 표면은 자기 배경을 따로 칠하면 안 된다.

@@ -535,7 +535,7 @@ export function renderSessionScreen(
           t("읽기 전용({role}) — 입력은 전달되지 않습니다", { role: model.attached.role }),
       ),
     );
-    const enable = element("button", "banner__action", t(model.unavailable === undefined ? "입력 켜기" : "지금 재연결"));
+    const enable = element("button", "banner__action", t(model.unavailable === undefined ? "terminal.enableInput" : "terminal.reconnectNow"));
     enable.type = "button";
     enable.disabled = model.opening === model.session.session_id;
     enable.addEventListener("click", actions.enableInput);

@@ -1,5 +1,11 @@
 /** Korean translations for semantic message IDs. */
 export const ko: Record<string, string> = {
+  "terminal.enableInput": "입력 켜기",
+  "terminal.reconnectNow": "지금 재연결",
+  "session.status.running": "실행 중",
+  "session.status.attention": "주의",
+  "session.status.blocked": "차단됨",
+  "session.status.unknown": "상태를 알 수 없음",
   "workspace.sessions": "세션",
   "workspace.selectSession": "세션을 선택하세요",
   "workspace.selectSessionHint": "목록에서 세션을 선택하면 터미널이 열립니다.",
