@@ -20,7 +20,7 @@ function fixture() {
   const backend = { profile: { id: "remote-owner", transport: { kind: "ssh" } } };
   const requestBackend = vi.fn(async (_, request) => ({ result: request.operation.endsWith("preview.v1")
     ? { schemaVersion: 1, plan, requiresRestartConfirmation: true }
-    : { schemaVersion: 1, receipt: { agentId: "agent-1", providerConversationRef: "conversation-1",
+    : { schemaVersion: 1, receipt: { agentId: "agent-1", providerId: "codex", selectionRevision: 8, providerConversationRef: "conversation-1",
       authority: { authority: { runtimeWorkspaceId: "new-workspace" } } } } }));
   return { agentId: "agent-1", projectId: "new", backend, requestBackend, plan };
 }

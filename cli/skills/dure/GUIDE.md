@@ -216,16 +216,38 @@ not prove reboot recovery is possible.
 
 Resume, Refresh and runtime/account switching keep the Agent's original project
 and working folder. Recovery still rejects `--project`, `--path` and `--cwd`.
-Use `dure runs move AGENT --project REGISTERED_ID --json` to preview moving a
-stopped native Codex conversation on its owning backend. Review the exact source,
+Use `dure runs move AGENT --project REGISTERED_ID --json` to preview moving an
+idle or stopped native Claude or Codex conversation on its owning backend. Review the exact source,
 destination, conversation and credential reference, then use the returned Apply
 command with its `--move-plan` and `--confirm-restart`. Retain the exact plan and
 backend for retries. The shared runtime journal owns the workspace handoff; project
 files and original launch provenance are preserved. It does not migrate hosts.
 
-The initial capability refuses live/unknown sources, structured Chat, Claude
-history relocation and retained checkout claims. Do not force-stop working Agents
-or edit project metadata to simulate a move. A failed target with `repair_required`
+A live source requires a preview of its exact idle revision and output position.
+Any activity after preview refuses the move; preview again only after the source
+is retained and idle. The Agent keeps its original checkout claim across the move,
+including reconnects and rollback. No worktree is deleted or copied.
+
+Claude requires CLI 2.1.223–2.1.284: its documented exact `--resume UUID` lookup
+searches all project directories. Dure checks the installed version and selected
+account's history before stopping; missing or ambiguous transcripts are refused.
+It neither copies that history nor forks a new conversation. See the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags).
+
+Claude 2.1.285 and later are currently refused: `--resume` may attach a running
+background worker in its original folder. The terminal stop fence does not own
+that worker. The same official resume contract documents this change. Dure never
+stops that independent worker or forks the conversation to work around it.
+
+The desktop Agent toolbar's Move conversation action uses this same preview and
+restart confirmation, followed by the backend's committed workspace projection.
+An uncertain response retains the plan; Check status can confirm completion or
+show the source-folder repair action. Reopening a pane recovers an unfinished
+plan from the backend journal; a backend restart refreshes read authority for that
+same owner and operation. Pending input is preserved.
+
+Structured Chat and unobservable sources remain unsupported. Do not force-stop
+working Agents or edit project metadata to simulate a move. A failed target with `repair_required`
 can use the returned rollback command to resume in its source folder through the
 same journal. Inspect status first after any uncertain response. Pane placement
 in another Space remains independent of the provider's working directory.

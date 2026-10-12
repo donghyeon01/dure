@@ -93,9 +93,88 @@ fn resolve_on_path(
     Err(reason.error())
 }
 
+/// A bounded metadata probe through the shared process owner. This never starts
+/// a conversation and never receives an account's credential environment.
+pub(super) async fn require_version_range(
+    executable: &str,
+    minimum: [u64; 3],
+    maximum_exclusive: [u64; 3],
+) -> Result<(), String> {
+    use hebbian_bounded_process::{CommandSpec, OutputLimitAction, run_async};
+    let executable = resolve_provider_executable(executable).map_err(|error| error.code)?;
+    let mut command = CommandSpec::new(executable);
+    command
+        .arg("--version")
+        .clear_env()
+        .on_output_limit(OutputLimitAction::TerminateProcessTree);
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let output = run_async(
+        &command,
+        std::time::Duration::from_secs(3),
+        4096,
+        tokio::time::sleep,
+    )
+    .await
+    .map_err(|_| "agent_project_move_provider_version_unavailable")?;
+    if !output.status.success() || !version_in_range(&output.stdout, minimum, maximum_exclusive) {
+        return Err("agent_project_move_provider_version_unsupported".into());
+    }
+    Ok(())
+}
+
+fn version_in_range(output: &[u8], minimum: [u64; 3], maximum_exclusive: [u64; 3]) -> bool {
+    let Some(version) = std::str::from_utf8(output)
+        .ok()
+        .and_then(|output| output.split_whitespace().next())
+    else {
+        return false;
+    };
+    let parts = version
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(parts) = parts else {
+        return false;
+    };
+    let Ok(version) = <[u64; 3]>::try_from(parts) else {
+        return false;
+    };
+    version >= minimum && version < maximum_exclusive
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_move_version_requires_known_supported_cross_project_resume() {
+        for version in ["2.1.223 (Claude Code)", "2.1.284 (Claude Code)"] {
+            assert!(version_in_range(
+                version.as_bytes(),
+                [2, 1, 223],
+                [2, 1, 285]
+            ));
+        }
+        for version in [
+            "2.1.222 (Claude Code)",
+            "2.1.285 (Claude Code)",
+            "2.1.296 (Claude Code)",
+            "3.0.0",
+            "1.9.999",
+            "unknown",
+            "2.1",
+            "2.1.223-dev",
+            "999999999999999999999.0.0",
+        ] {
+            assert!(!version_in_range(
+                version.as_bytes(),
+                [2, 1, 223],
+                [2, 1, 285]
+            ));
+        }
+    }
 
     #[test]
     fn resolution_distinguishes_absent_unusable_and_unobserved_without_running_commands() {

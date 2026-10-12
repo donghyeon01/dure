@@ -357,4 +357,19 @@ export const agents: Record<string, string> = {
 	"agents.worktree.useExisting": "この既存のワークツリーを使用",
 	"agents.account.conversationUnavailable":
 		"会話 ID を確認できないため、別のアカウントでこの会話を続けられません。このエージェントは開いたままにしてください。今すぐ続けるには、新しいエージェントを作成し、利用枠の残っているアカウントを選択してください。",
+	"agents.projectMove.title": "会話を別のプロジェクトへ移動",
+	"agents.projectMove.description":
+		"待機中または停止済みの会話を、登録済みの別のプロジェクトで再開します。会話の識別子、ファイル、元のチェックアウトは保持されます。新しい操作があるとプレビューは無効になります。",
+	"agents.projectMove.destination": "移動先プロジェクト",
+	"agents.projectMove.source": "元のフォルダー",
+	"agents.projectMove.preview": "移動をプレビュー",
+	"agents.projectMove.confirm": "再開して移動",
+	"agents.projectMove.partial": "プロジェクト一覧の一部のみを表示しています。",
+	"agents.projectMove.failed": "移動を準備できませんでした。",
+	"agents.projectMove.unconfirmed":
+		"移動は未確認です。同じ計画を再試行するか、別の移動を行う前にランタイムの状態を確認してください。",
+	"agents.projectMove.status": "状態を確認",
+	"agents.projectMove.repair": "元のフォルダーで再開",
+	"agents.projectMove.versionRequired":
+		"安全に移動できるバージョンを確認できませんでした。現在、Claude の移動には Claude Code 2.1.223–2.1.284 が必要です。新しいバージョンでは元のフォルダーのバックグラウンドセッションに接続する場合があります。",
 };

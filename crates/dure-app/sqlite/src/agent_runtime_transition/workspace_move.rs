@@ -67,17 +67,21 @@ async fn require_source(
     connection: &mut SqliteConnection,
     movement: &dure_app::AgentRuntimeWorkspaceMoveV1,
 ) -> Result<(), DomainStoreErrorV1> {
-    if records::agent(&mut *connection, &movement.source_agent.agent_id)
-        .await?
+    let checkout =
+        crate::agent_runtime_checkout::checkout_on(connection, &movement.source_agent.agent_id)
+            .await?;
+    if checkout
         .as_ref()
-        != Some(&movement.source_agent)
+        .is_some_and(|checkout| checkout.admission != dure_app::SessionCheckoutAdmissionV1::Open)
+        || records::agent(&mut *connection, &movement.source_agent.agent_id)
+            .await?
+            .as_ref()
+            != Some(&movement.source_agent)
         || records::workspace_on(connection, &movement.source_workspace.workspace_id)
             .await?
             .as_ref()
             != Some(&movement.source_workspace)
-        || crate::agent_runtime_checkout::checkout_on(connection, &movement.source_agent.agent_id)
-            .await?
-            .is_some()
+        || checkout.map(|checkout| checkout.binding) != movement.source_checkout
     {
         return Err(identity_conflict(
             "agent workspace move",

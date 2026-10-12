@@ -356,4 +356,19 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.worktree.useExisting": "Use this existing worktree",
 	"agents.account.conversationUnavailable":
 		"Dure can't identify this conversation to continue it with another account. Keep this agent open. To continue now, start a new agent and choose an account with quota remaining.",
+	"agents.projectMove.title": "Move conversation to project",
+	"agents.projectMove.description":
+		"Restart this idle or stopped conversation in another registered project. Conversation identity, files and the original checkout are preserved. New activity invalidates the preview.",
+	"agents.projectMove.destination": "Destination project",
+	"agents.projectMove.source": "Original folder",
+	"agents.projectMove.preview": "Preview move",
+	"agents.projectMove.confirm": "Restart and move",
+	"agents.projectMove.partial": "Only part of the project list is available.",
+	"agents.projectMove.failed": "The move could not be prepared.",
+	"agents.projectMove.unconfirmed":
+		"The move is unconfirmed. Retry this exact plan or inspect runtime status before another move.",
+	"agents.projectMove.status": "Check status",
+	"agents.projectMove.repair": "Resume in original folder",
+	"agents.projectMove.versionRequired":
+		"Dure could not verify a safe provider version. Claude project moves currently require Claude Code 2.1.223–2.1.284; newer versions may attach a background session in its original folder.",
 };

@@ -356,4 +356,19 @@ export const agents: Record<string, string> = {
 	"agents.worktree.useExisting": "이 기존 워크트리 사용",
 	"agents.account.conversationUnavailable":
 		"대화 ID를 확인할 수 없어 다른 계정으로 이 대화를 이어갈 수 없습니다. 이 에이전트는 열어 두세요. 지금 계속하려면 새 에이전트를 만들고 한도가 남은 계정을 선택하세요.",
+	"agents.projectMove.title": "대화를 다른 프로젝트로 이동",
+	"agents.projectMove.description":
+		"대기 중이거나 중지된 대화를 등록된 다른 프로젝트에서 다시 시작합니다. 대화 식별자, 파일, 기존 체크아웃은 유지됩니다. 새 활동이 발생하면 미리보기가 무효화됩니다.",
+	"agents.projectMove.destination": "대상 프로젝트",
+	"agents.projectMove.source": "기존 폴더",
+	"agents.projectMove.preview": "이동 미리보기",
+	"agents.projectMove.confirm": "다시 시작하고 이동",
+	"agents.projectMove.partial": "프로젝트 목록의 일부만 표시됩니다.",
+	"agents.projectMove.failed": "이동을 준비할 수 없습니다.",
+	"agents.projectMove.unconfirmed":
+		"이동이 확인되지 않았습니다. 동일한 계획을 재시도하거나 다른 이동 전에 런타임 상태를 확인하세요.",
+	"agents.projectMove.status": "상태 확인",
+	"agents.projectMove.repair": "기존 폴더에서 재개",
+	"agents.projectMove.versionRequired":
+		"안전하게 이동할 수 있는 버전을 확인하지 못했습니다. 현재 Claude 이동은 Claude Code 2.1.223–2.1.284에서 지원됩니다. 이후 버전은 원래 폴더의 백그라운드 세션에 연결될 수 있습니다.",
 };

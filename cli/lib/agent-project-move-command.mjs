@@ -1,19 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
-import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import { isAgentProjectMovePlan, isAgentProjectMoveReceipt } from "./contracts/agent-project-move.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
-
-function validPlan(plan, agentId, projectId) {
-  const move = plan?.workspaceMove;
-  return plan?.schemaVersion === 1 && plan.source?.agentId === agentId &&
-    Number.isSafeInteger(plan.source.revision) && plan.source.revision > 0 &&
-    isDureDomainIdV1(plan.operationId) && isDureDomainIdV1(plan.idempotencyKey) &&
-    plan.source.providerId === "codex" && plan.targetInteractionProfile === "native_cli" &&
-    typeof plan.providerConversationRef === "string" && plan.providerConversationRef.length > 0 &&
-    move?.sourceAgent?.agentId === agentId && move.targetProject?.projectId === projectId &&
-    move.targetWorkspace?.projectId === projectId && isDureDomainIdV1(move.targetWorkspace.workspaceId) &&
-    typeof move.targetWorkspace.rootPath === "string" && move.targetWorkspace.rootPath.length > 0;
-}
 
 /** The backend previews and journals the move. This adapter carries the exact
  * reviewed plan on retry; neither run provenance nor pane state is rewritten. */
@@ -38,7 +26,7 @@ export async function collectAgentProjectMove({ agentId, projectId, movePlan, co
       if (result?.schemaVersion !== 1 || result.requiresRestartConfirmation !== true) throw Object.assign(new Error("Invalid move preview."), { code: "project_move_response_invalid" });
       plan = result.plan;
     }
-    if (!validPlan(plan, agentId, projectId)) throw Object.assign(new Error("Invalid move plan."), { code: "project_move_plan_invalid" });
+    if (!isAgentProjectMovePlan(plan, agentId, projectId)) throw Object.assign(new Error("Invalid move plan."), { code: "project_move_plan_invalid" });
     const encoded = Buffer.from(JSON.stringify({ backendId: backend.profile.id, plan })).toString("base64url");
     const apply = ["runs", "move", agentId, "--project", projectId, "--move-plan", encoded, "--confirm-restart", "--backend", backend.profile.id, "--json"];
     prepared = { ...base, ok: true, state: "preview", plan, continuation: {
@@ -51,10 +39,7 @@ export async function collectAgentProjectMove({ agentId, projectId, movePlan, co
       requiredCapabilities: ["agent_runtime.project_move.apply.v1"],
       body: { schemaVersion: 1, plan, confirmRestart: true },
     }, backend.transportOptions);
-    const receipt = result?.receipt;
-    if (result?.schemaVersion !== 1 || receipt?.agentId !== agentId ||
-        receipt.providerConversationRef !== plan.providerConversationRef ||
-        receipt.authority?.authority?.runtimeWorkspaceId !== plan.workspaceMove.targetWorkspace.workspaceId) {
+    if (!isAgentProjectMoveReceipt(result, plan)) {
       throw Object.assign(new Error("Inspect the retained status command; the move was not confirmed."), { code: "project_move_receipt_mismatch" });
     }
     return { ...prepared, state: "completed", execution: "completed", result };
@@ -71,7 +56,7 @@ export function formatAgentProjectMove(report) {
     `${report.agentId}: project move ${report.state}`,
     ...(move ? [`From: ${move.sourceWorkspace.projectId} — ${move.sourceWorkspace.rootPath}`,
       `To: ${move.targetProject.projectId} — ${move.targetWorkspace.rootPath}`,
-      `Conversation: ${report.plan.providerConversationRef}`, "Project files are preserved. This resumes the stopped provider in the destination folder."] : []),
+      `Conversation: ${report.plan.providerConversationRef}`, "Project files are preserved. This restarts an idle or stopped provider in the destination folder. Original checkout claims remain retained."] : []),
     ...(report.error ? [`${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Move refused"}`] : []),
     ...(report.continuation ? [`Apply/retry: ${rehostCommandLine(report.continuation.apply)}`,
       `Status: ${rehostCommandLine(report.continuation.status)}`,

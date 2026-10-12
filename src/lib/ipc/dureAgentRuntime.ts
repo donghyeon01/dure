@@ -1,4 +1,8 @@
 import type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/agents/agentRuntimeLaunchSelectionTypes";
+import {
+	type AgentProjectMovePlan,
+	isAgentProjectMovePlan,
+} from "../../../cli/lib/contracts/agent-project-move.mjs";
 
 export type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/agents/agentRuntimeLaunchSelectionTypes";
 
@@ -677,7 +681,19 @@ function parseTransitionIntentResult<
 	) {
 		throw contractError();
 	}
+	const move = record(result.workspaceMovePlan);
+	const movement = record(move?.workspaceMove);
+	const project = record(movement?.targetProject);
+	if (
+		result.workspaceMovePlan !== undefined &&
+		(typeof project?.projectId !== "string" ||
+			!isAgentProjectMovePlan(move, required.agentId, project.projectId) ||
+			move?.operationId !== required.operationId ||
+			record(move?.source)?.revision !== result.sourceSelectionRevision)
+	)
+		throw contractError();
 	const selection: DureAgentRuntimeIntentSelectionV1 = {
+		...(move ? { workspaceMovePlan: move as AgentProjectMovePlan } : {}),
 		sourceSelectionRevision: result.sourceSelectionRevision,
 		sourceInteractionProfile: result.sourceInteractionProfile,
 		sourceExecutionProfile,

@@ -785,24 +785,80 @@ fn failure(code: &'static str) -> ExtensionFailureCodeV1 {
     ExtensionFailureCodeV1::new(code).expect("static provider failure code is valid")
 }
 
-/// Pin the provider's logical root as well as its process cwd when resuming in
-/// another project. Other providers need a reviewed history relocation contract.
+/// Version interval with exact cross-project lookup and no automatic background attach.
+/// The execution adapter probes this before stopping the source.
+pub fn native_provider_project_move_version_range(
+    provider_id: &ProviderIdV1,
+) -> Option<([u64; 3], [u64; 3])> {
+    // Starting at 2.1.285 --resume can attach an independently owned background
+    // worker. Hmux stopping the attached terminal cannot prove that worker stopped.
+    (provider_id.as_str() == "claude").then_some(([2, 1, 223], [2, 1, 285]))
+}
+
+/// Pin the provider's logical root as well as its process cwd. Claude Code
+/// 2.1.223+ searches all project directories for an exact --resume UUID:
+/// https://code.claude.com/docs/en/cli-reference#cli-flags
+/// Keep that identity and the ordinary recovery template; never fork or copy
+/// its project history. Older CLIs may refuse cross-project resume; the move
+/// journal must observe a live exact conversation at the destination to commit.
 pub fn native_provider_project_move(
     provider_id: &ProviderIdV1,
     plan: &mut AgentProviderSessionLaunchPlanV1,
     directory: &std::path::Path,
 ) -> Result<(), ExtensionFailureCodeV1> {
-    if provider_id.as_str() != "codex" {
-        return Err(failure("conversation_project_move_unsupported"));
-    }
     let directory = directory
         .to_str()
         .filter(|_| directory.is_absolute())
         .ok_or_else(|| failure("conversation_project_move_path_invalid"))?;
-    let flags = || ["--cd".to_owned(), directory.to_owned()];
-    plan.launch.arguments.splice(0..0, flags());
-    if let Some(arguments) = &mut plan.resume_arguments {
-        arguments.splice(0..0, flags());
+    match provider_id.as_str() {
+        "codex" => {
+            let flags = || ["--cd".to_owned(), directory.to_owned()];
+            plan.launch.arguments.splice(0..0, flags());
+            if let Some(arguments) = &mut plan.resume_arguments {
+                arguments.splice(0..0, flags());
+            }
+        }
+        "claude" => {
+            // A name can resolve to another session. Only a concrete UUID may
+            // cross project namespaces; the history owner preflights it too.
+            if plan
+                .launch
+                .arguments
+                .iter()
+                .chain(plan.resume_arguments.iter().flatten())
+                .any(|argument| {
+                    [
+                        "--fork-session",
+                        "--continue",
+                        "-c",
+                        "--session-id",
+                        "--resume-session-at",
+                    ]
+                    .iter()
+                    .any(|flag| {
+                        argument.as_str() == *flag
+                            || argument
+                                .strip_prefix(*flag)
+                                .is_some_and(|suffix| suffix.starts_with('='))
+                    })
+                })
+            {
+                return Err(failure("conversation_resume_identity_invalid"));
+            }
+            let mut resumes = plan
+                .launch
+                .arguments
+                .windows(2)
+                .filter(|pair| pair[0] == "--resume");
+            if !resumes
+                .next()
+                .is_some_and(|pair| exact_uuid_identity(&pair[1]))
+                || resumes.next().is_some()
+            {
+                return Err(failure("conversation_resume_identity_invalid"));
+            }
+        }
+        _ => return Err(failure("conversation_project_move_unsupported")),
     }
     Ok(())
 }

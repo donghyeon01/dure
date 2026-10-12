@@ -413,24 +413,78 @@ pub fn read_roots(
     transcript_from_file(&path, provider, conversation_id, parse)
 }
 
-/// Same-host project moves may reuse only a provider's global history namespace.
-/// Claude's project-scoped resume requires a separate relocation contract.
+/// Resolve exact history in the selected account's namespace without copying
+/// credentials or project files. Claude's supported --resume UUID search crosses
+/// project directories (2.1.223+); ambiguous duplicates cannot authorize a move.
 pub fn preflight_project_move_history(
     provider_id: &str,
     profile_directory: Option<PathBuf>,
     conversation: &str,
 ) -> Result<(), &'static str> {
-    if provider_id != "codex" {
-        return Err("agent_project_move_provider_history_unsupported");
+    if !safe_id(conversation) {
+        return Err("agent_project_move_history_unavailable");
     }
+    let directory = match provider_id {
+        "codex" => ".codex",
+        "claude" => ".claude",
+        _ => return Err("agent_project_move_provider_history_unsupported"),
+    };
     let home = profile_directory
         .or_else(|| {
             std::env::var_os("HOME")
                 .map(PathBuf::from)
-                .map(|home| home.join(".codex"))
+                .map(|home| home.join(directory))
         })
         .ok_or("agent_project_move_history_unavailable")?;
+    if provider_id == "claude" {
+        return preflight_claude_project_move_history(&home.join("projects"), conversation);
+    }
     if find_codex_conversation(&home.join("sessions"), conversation, 0, &mut 0).is_none() {
+        return Err("agent_project_move_history_unavailable");
+    }
+    Ok(())
+}
+
+fn preflight_claude_project_move_history(
+    projects: &Path,
+    conversation: &str,
+) -> Result<(), &'static str> {
+    let mut found = None;
+    let entries = fs::read_dir(projects).map_err(|_| "agent_project_move_history_unavailable")?;
+    for (index, entry) in entries.enumerate() {
+        if index >= MAX_TRANSCRIPT_DISCOVERY_ENTRIES {
+            return Err("agent_project_move_history_unavailable");
+        }
+        let entry = entry.map_err(|_| "agent_project_move_history_unavailable")?;
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path().join(format!("{conversation}.jsonl"));
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err("agent_project_move_history_unavailable"),
+        };
+        if !metadata.is_file() {
+            return Err("agent_project_move_history_unavailable");
+        }
+        if found.replace(path).is_some() {
+            return Err("agent_project_move_history_ambiguous");
+        }
+    }
+    let path = found.ok_or("agent_project_move_history_unavailable")?;
+    if !bounded_prefix(&path, MAX_SESSION_BYTES).is_some_and(|prefix| {
+        prefix
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|value| {
+                value.get("sessionId").and_then(Value::as_str) == Some(conversation)
+                    && matches!(
+                        value.get("type").and_then(Value::as_str),
+                        Some("user" | "assistant")
+                    )
+            })
+    }) {
         return Err("agent_project_move_history_unavailable");
     }
     Ok(())

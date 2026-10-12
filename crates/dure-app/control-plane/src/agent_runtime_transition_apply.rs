@@ -144,6 +144,8 @@ pub(crate) struct AgentRuntimeRepairIntentInspectObservationV1 {
     target_interaction_profile: AgentInteractionProfileV1,
     target_execution_profile: AgentExecutionProfileV1,
     target_launch_selection: AgentRuntimeLaunchSelectionV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_move_plan: Option<AgentRuntimeTransitionIntentV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -540,6 +542,11 @@ pub(crate) async fn inspect_repair_intent(
     };
     let mut target_launch_selection = transition.intent.effective_launch_selection();
     target_launch_selection.permission_mode = Some(transition.intent.effective_permission_mode());
+    let workspace_move_plan = transition
+        .intent
+        .workspace_move
+        .as_ref()
+        .map(|_| transition.intent.clone());
     Ok(AgentRuntimeRepairIntentInspectObservationV1 {
         status,
         schema_version: AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1,
@@ -553,6 +560,7 @@ pub(crate) async fn inspect_repair_intent(
         target_interaction_profile: transition.intent.target_interaction_profile,
         target_execution_profile: transition.intent.target_execution_profile,
         target_launch_selection,
+        workspace_move_plan,
     })
 }
 

@@ -357,4 +357,19 @@ export const agents: Record<string, string> = {
 	"agents.worktree.useExisting": "使用此现有工作树",
 	"agents.account.conversationUnavailable":
 		"Dure 无法确认此对话的 ID，因此无法使用其他账号继续此对话。请保持此智能体打开。如需立即继续，请新建智能体并选择仍有可用额度的账号。",
+	"agents.projectMove.title": "将对话移至其他项目",
+	"agents.projectMove.description":
+		"在另一个已注册项目中重新启动空闲或已停止的对话。对话标识、文件和原有检出均会保留。新活动会使预览失效。",
+	"agents.projectMove.destination": "目标项目",
+	"agents.projectMove.source": "原文件夹",
+	"agents.projectMove.preview": "预览移动",
+	"agents.projectMove.confirm": "重启并移动",
+	"agents.projectMove.partial": "仅显示部分项目列表。",
+	"agents.projectMove.failed": "无法准备移动。",
+	"agents.projectMove.unconfirmed":
+		"移动尚未确认。请重试此计划，或在再次移动前检查运行时状态。",
+	"agents.projectMove.status": "检查状态",
+	"agents.projectMove.repair": "在原文件夹中恢复",
+	"agents.projectMove.versionRequired":
+		"无法确认可安全移动的提供方版本。目前移动 Claude 对话需要 Claude Code 2.1.223–2.1.284；更新版本可能连接到原文件夹中的后台会话。",
 };

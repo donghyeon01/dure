@@ -36,24 +36,101 @@ fn project_move_pins_codex_working_root_in_both_launch_and_recovery_without_fork
 }
 
 #[test]
-fn project_move_refuses_unreviewed_provider_history_relocation() {
+fn claude_project_move_keeps_exact_resume_identity_and_recovery_without_history_copy_or_fork() {
     let provider = ProviderIdV1::new("claude").unwrap();
     let mut plan = native_provider_session_launch_plan(
         &provider,
         &ProviderPermissionModeV1::Default,
         None,
         None,
-        NativeProviderConversationReference::Exact("conversation-1"),
+        NativeProviderConversationReference::Exact("019f0000-0000-7000-8000-000000000185"),
         "__CONVERSATION__",
     )
     .unwrap()
     .unwrap();
     let original = plan.clone();
-    assert!(
-        native_provider_project_move(&provider, &mut plan, std::path::Path::new("/workspace/new"))
-            .is_err()
-    );
+    native_provider_project_move(&provider, &mut plan, std::path::Path::new("/workspace/new"))
+        .unwrap();
     assert_eq!(plan, original);
+    assert!(
+        plan.launch
+            .arguments
+            .windows(2)
+            .any(|pair| pair == ["--resume", "019f0000-0000-7000-8000-000000000185"])
+    );
+    assert!(
+        !plan
+            .launch
+            .arguments
+            .iter()
+            .any(|argument| argument == "--fork-session")
+    );
+}
+
+#[test]
+fn claude_project_move_refuses_names_or_missing_history_identity_without_changing_arguments() {
+    let provider = ProviderIdV1::new("claude").unwrap();
+    for reference in [
+        NativeProviderConversationReference::Exact("same-name"),
+        NativeProviderConversationReference::Fresh,
+    ] {
+        let mut plan = native_provider_session_launch_plan(
+            &provider,
+            &ProviderPermissionModeV1::Default,
+            None,
+            None,
+            reference,
+            "__CONVERSATION__",
+        )
+        .unwrap()
+        .unwrap();
+        let original = plan.clone();
+        assert!(
+            native_provider_project_move(
+                &provider,
+                &mut plan,
+                std::path::Path::new("/workspace/new")
+            )
+            .is_err()
+        );
+        assert_eq!(plan, original);
+    }
+}
+
+#[test]
+fn claude_project_move_refuses_fork_or_truncation_flags_in_launch_and_recovery() {
+    let provider = ProviderIdV1::new("claude").unwrap();
+    for flag in [
+        "--fork-session",
+        "--session-id=other",
+        "--resume-session-at=older-turn",
+    ] {
+        for recovery in [false, true] {
+            let mut plan = native_provider_session_launch_plan(
+                &provider,
+                &ProviderPermissionModeV1::Default,
+                None,
+                None,
+                NativeProviderConversationReference::Exact("019f0000-0000-7000-8000-000000000185"),
+                "__CONVERSATION__",
+            )
+            .unwrap()
+            .unwrap();
+            if recovery {
+                plan.resume_arguments.as_mut().unwrap().push(flag.into());
+            } else {
+                plan.launch.arguments.push(flag.into());
+            }
+            assert!(
+                native_provider_project_move(
+                    &provider,
+                    &mut plan,
+                    std::path::Path::new("/workspace/new")
+                )
+                .is_err()
+            );
+        }
+    }
 }
 
 #[test]

@@ -23,6 +23,7 @@ export type AgentToolbarControlId =
 	| "launch-effort"
 	| "launch-permissions"
 	| "view-switch"
+	| "project-move"
 	| "diff-window"
 	| "source-control-window"
 	| "conversation-history";
@@ -40,6 +41,7 @@ export const AGENT_TOOLBAR_CONTROLS: readonly AgentToolbarControlDescriptorV1[] 
 		// 2026-08-31 owner call: surface switching is itself a pro concept —
 		// basic users stay on the surface the agent opened with.
 		{ id: "view-switch", tier: "pro", labelKey: "agents.runtime.viewLabel" },
+		{ id: "project-move", tier: "pro", labelKey: "agents.projectMove.title" },
 		{
 			id: "diff-window",
 			tier: "basic",

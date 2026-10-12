@@ -7,6 +7,7 @@ import type { Provider } from "@/lib/agents/providerContracts";
 import type { HmuxManagedGenerationV1 } from "@/lib/hmux/identity/hmuxManagedGeneration";
 import type { DureBackendIdentity } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
+import type { AgentProjectMovePlan } from "../../../cli/lib/contracts/agent-project-move.mjs";
 import type {
 	ProviderPermissionMode,
 	RuntimeInteractionProfile,
@@ -95,6 +96,8 @@ interface DureAgentRuntimeRepairRequiredV1
 }
 
 export interface DureAgentRuntimeIntentSelectionV1 {
+	/** Exact admitted journal plan; absent for ordinary transitions and older backends. */
+	workspaceMovePlan?: AgentProjectMovePlan;
 	sourceSelectionRevision: number;
 	sourceInteractionProfile: AgentRuntimeInteractionProfileV1;
 	sourceExecutionProfile: AgentExecutionProfileV1;

@@ -713,6 +713,20 @@ describe("Dure Agent runtime client", () => {
 		});
 	});
 
+	it.each([false, true])("validates the persisted move plan against exact repair identity (foreign=%s)", async foreign => {
+		const source = envelope();
+		const identity = { schemaVersion: 1, agentId: "agent-1", operationId: "runtime-transition-1", journalRevision: 1, targetInteractionProfile: "native_cli", targetExecutionProfile: source.result.receipt.executionProfile };
+		const plan = { schemaVersion: 1, operationId: foreign ? "other" : identity.operationId, idempotencyKey: "request-1", source: { agentId: "agent-1", providerId: "codex", revision: source.result.receipt.selectionRevision }, targetInteractionProfile: "native_cli", providerConversationRef: "conversation-1", workspaceMove: { sourceAgent: { agentId: "agent-1" }, sourceWorkspace: { projectId: "old", rootPath: "/old" }, targetProject: { projectId: "new" }, targetWorkspace: { projectId: "new", workspaceId: "move-workspace", rootPath: "/new" } } };
+		const invokeCommand = vi.fn().mockResolvedValueOnce({ ...source, result: { ...identity, state: "transitioning", stage: "admitted", projectionContext: projectionContext() } })
+			.mockResolvedValueOnce({ ...source, result: { ...identity, state: "admitted", ...transitionInspectionWireFields(source), workspaceMovePlan: plan } });
+		const client = createDureAgentRuntimeClient({ invokeCommand });
+		const observed = await client.inspect("agent-1");
+		if (observed.state !== "transitioning" || observed.stage !== "admitted") throw new Error("unreachable");
+		const inspection = client.inspectTransitionIntent({ ...observed, stage: "admitted" });
+		if (foreign) await expect(inspection).rejects.toThrow();
+		else expect((await inspection).workspaceMovePlan).toEqual(plan);
+	});
+
 	it("projects a permanent target failure as an exact repair handle", async () => {
 		const source = envelope();
 		const invokeCommand = vi

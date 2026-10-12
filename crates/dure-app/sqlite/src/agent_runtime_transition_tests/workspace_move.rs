@@ -12,6 +12,7 @@ async fn move_plan(store: &SqliteDomainStore) -> AgentRuntimeTransitionIntentV1 
     plan.workspace_move = Some(dure_app::AgentRuntimeWorkspaceMoveV1 {
         source_agent,
         source_workspace,
+        source_checkout: None,
         target_project: ProjectRecordV1 {
             project_id: ProjectIdV1::new("project-2").unwrap(),
             root_path: "/workspace/other".into(),
@@ -234,5 +235,131 @@ async fn workspace_move_rejects_a_source_or_destination_changed_after_preview() 
                 .unwrap()
                 .is_none()
         );
+    }
+}
+
+#[tokio::test]
+async fn workspace_move_retains_the_original_checkout_claim_across_commit_and_reconnect() {
+    let root = TempDir::new().unwrap();
+    let path = database_path(&root);
+    let store = initialized_store(&path).await;
+    let selection = native_selection();
+    store
+        .initialize_agent_runtime_selection(&selection)
+        .await
+        .unwrap();
+    let checkout = super::checkout_handoff::checkout();
+    store.prepare_session_checkout(&checkout).await.unwrap();
+    let retained = store
+        .adopt_agent_runtime_checkout(&selection, &native_authority(), &checkout)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut plan = move_plan(&store).await;
+    plan.workspace_move.as_mut().unwrap().source_checkout = Some(retained.binding.clone());
+    store.admit_agent_runtime_transition(&plan).await.unwrap();
+    start_target(&store, &plan).await;
+    store
+        .advance_agent_runtime_transition(&advance(
+            &plan.operation_id,
+            3,
+            AgentRuntimeTransitionAdvanceV1::Committed,
+            140,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .agent_runtime_checkout(&selection.agent_id)
+            .await
+            .unwrap(),
+        Some(retained.clone())
+    );
+    assert_ne!(
+        retained.binding.working_directory,
+        plan.workspace_move
+            .as_ref()
+            .unwrap()
+            .target_workspace
+            .root_path
+    );
+    store.close().await;
+    let reopened = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .agent_runtime_checkout(&selection.agent_id)
+            .await
+            .unwrap(),
+        Some(retained)
+    );
+}
+
+#[tokio::test]
+async fn workspace_move_refuses_a_changed_or_closing_checkout_at_admission_and_commit() {
+    for after_start in [false, true] {
+        for closing in [false, true] {
+            let root = TempDir::new().unwrap();
+            let store = initialized_store(&database_path(&root)).await;
+            let selection = native_selection();
+            store
+                .initialize_agent_runtime_selection(&selection)
+                .await
+                .unwrap();
+            let checkout = super::checkout_handoff::checkout();
+            store.prepare_session_checkout(&checkout).await.unwrap();
+            let retained = store
+                .adopt_agent_runtime_checkout(&selection, &native_authority(), &checkout)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut plan = move_plan(&store).await;
+            plan.workspace_move.as_mut().unwrap().source_checkout = Some(retained.binding.clone());
+            if after_start {
+                store.admit_agent_runtime_transition(&plan).await.unwrap();
+                start_target(&store, &plan).await;
+            }
+            if closing {
+                store
+                    .begin_session_checkout_close(&retained.binding.identity)
+                    .await
+                    .unwrap();
+            } else {
+                // Simulate an independently changed registration while keeping
+                // the Agent and selected runtime records unchanged.
+                sqlx::query("UPDATE agents SET checkout_owner_id = NULL WHERE agent_id = ?1")
+                    .bind(selection.agent_id.as_str())
+                    .execute(&store.pool)
+                    .await
+                    .unwrap();
+            }
+            if after_start {
+                assert!(
+                    store
+                        .advance_agent_runtime_transition(&advance(
+                            &plan.operation_id,
+                            3,
+                            AgentRuntimeTransitionAdvanceV1::Committed,
+                            140
+                        ))
+                        .await
+                        .is_err()
+                );
+            } else {
+                assert!(store.admit_agent_runtime_transition(&plan).await.is_err());
+            }
+            assert_eq!(
+                store
+                    .agent(&selection.agent_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .workspace_id,
+                plan.workspace_move
+                    .as_ref()
+                    .unwrap()
+                    .source_workspace
+                    .workspace_id
+            );
+        }
     }
 }

@@ -1,3 +1,4 @@
+import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
 import { NativeAgentResponseView } from "@/components/agents/NativeAgentResponseView";
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -621,6 +622,13 @@ export function NativeAgentPanel({
             onSwitchingChange={setResuming}
           />,
           )}
+        {backendManaged && supportsStructuredChat(agent.provider) && toolbarControls.visible("project-move") &&
+          toolbarControls.slot("project-move", <AgentProjectMove
+            key={`project-move:${runtimeOwnerKey}`}
+            agentId={agent.id}
+            disabled={runtimeTransitioning || !!agent.pendingCredentialSwitch || !!agent.pendingCmd}
+            onBusyChange={setResuming}
+          />)}
         <AgentPanelWindowActions
           agent={agent}
           project={project}

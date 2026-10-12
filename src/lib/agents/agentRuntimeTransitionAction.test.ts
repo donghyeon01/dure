@@ -15,6 +15,10 @@ vi.mock("@/lib/ipc/dureAgentRuntime", async (original) => ({
 		inspectExact: mocks.inspect,
 	}),
 }));
+vi.mock("@/lib/ipc/dureBackend", async (original) => ({
+	...(await original<object>()),
+	resolveSelectedDureBackendRouteAuthority: async () => routeAuthority,
+}));
 vi.mock("@/lib/sessions/managed/managedAgentRehostConvergence", () => ({
 	convergeManagedAgentRehost: async () => null,
 }));
@@ -25,6 +29,7 @@ vi.mock("@/lib/agents/agentRuntimeStoreProjector", () => ({
 import { useStore } from "@/store";
 import { agentFixture, managedBindingFixture } from "@/test/agentFixtures";
 import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
+import { prepareAgentProjectMove } from "./agentProjectMove";
 import { transitionAgentRuntime } from "./agentRuntimeTransitionAction";
 
 const routeAuthority = testDureBackendRouteAuthority("local", "backend-1");
@@ -156,6 +161,88 @@ describe("queued runtime dispatch authorization", () => {
 				},
 			}),
 		).rejects.toThrow("request_cancelled");
+		expect(mocks.transition).not.toHaveBeenCalled();
+	});
+});
+
+describe("project move uses shared repair reconciliation", () => {
+	const movePlan = {
+		schemaVersion: 1,
+		operationId: "transition-1",
+		idempotencyKey: "move-request",
+		targetInteractionProfile: "native_cli",
+		source: { agentId: "agent-1", providerId: "codex", revision: 2 },
+		providerConversationRef: "conversation-1",
+		workspaceMove: {
+			sourceAgent: { agentId: "agent-1" },
+			sourceWorkspace: { rootPath: "/repo/.worktrees/agent-1" },
+			targetProject: { projectId: "project-2" },
+			targetWorkspace: {
+				workspaceId: "move-workspace",
+				rootPath: "/destination",
+			},
+		},
+	};
+	const required = {
+		...admitted,
+		state: "repair_required",
+		targetInteractionProfile: "native_cli",
+		failureKind: "launch_failed",
+		providerCode: "launch_failed",
+	};
+	it("reconciles a lost repair response to the observed original-folder successor without another launch", async () => {
+		useStore.setState({
+			agents: [
+				agentFixture({
+					conversationId: "conversation-1",
+					runtimeBinding: managedBindingFixture(),
+				}),
+			],
+		});
+		mocks.inspect.mockResolvedValue(required);
+		mocks.inspectTransitionIntent.mockResolvedValue({
+			...intent,
+			...required,
+			workspaceMovePlan: movePlan,
+		});
+		const move = await prepareAgentProjectMove("agent-1");
+		const restored = {
+			...result,
+			state: "stable",
+			providerId: "codex",
+			providerConversationRef: "conversation-1",
+			interactionProfile: "native_cli",
+			launchSelection: intent.sourceLaunchSelection,
+			sessionId: "session-2",
+			workspaceId: "workspace-1",
+			launchIdempotencyKey: "repair-key",
+			stopFence: {
+				runnerPrincipal: "principal",
+				runnerInstance: "runner",
+				channelEpoch: "2",
+				hostInstanceId: "host",
+				terminalEpoch: "2",
+			},
+		};
+		mocks.transition.mockImplementationOnce(async () => {
+			mocks.inspect.mockResolvedValue(restored);
+			throw new Error("repair response lost");
+		});
+		await move.repair(move.recoveredPlan!);
+		expect(mocks.transition).toHaveBeenCalledOnce();
+		expect(mocks.project).toHaveBeenCalledWith(
+			"agent-1",
+			expect.objectContaining(restored),
+		);
+	});
+	it("refuses a different repair operation without submitting a replacement", async () => {
+		await expect(
+			transitionAgentRuntime({
+				agentId: "agent-1",
+				targetInteractionProfile: "native_cli",
+				expectedOperationId: "other-operation",
+			}),
+		).rejects.toThrow("conflict");
 		expect(mocks.transition).not.toHaveBeenCalled();
 	});
 });

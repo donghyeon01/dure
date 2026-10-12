@@ -5,7 +5,7 @@ use dure_app::{
     SessionCheckoutOwnerV1,
 };
 
-fn checkout() -> SessionCheckoutBindingV1 {
+pub(super) fn checkout() -> SessionCheckoutBindingV1 {
     SessionCheckoutBindingV1::new(
         SessionCheckoutIdentityV1 {
             runtime_namespace: "/runtime/one".into(),

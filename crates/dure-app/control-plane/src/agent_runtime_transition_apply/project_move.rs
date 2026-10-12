@@ -1,6 +1,6 @@
 //! Project moves use the runtime transition journal, including its restart and
-//! repair boundaries. This first capability admits only proven stopped native
-//! Codex sources without a retained checkout claim, on the selected backend.
+//! repair boundaries. A live source requires the exact observed idle fence;
+//! checkout claims remain owned by the Agent, on the selected backend.
 use super::*;
 use dure_app::{
     AgentRuntimeWorkspaceMoveV1, ProjectIdV1, ProjectRecordV1, WorkspaceIdV1, WorkspaceRecordV1,
@@ -77,6 +77,14 @@ pub(crate) async fn apply(
         if current != body.plan {
             return Err("agent_project_move_preview_stale".into());
         }
+        // Retain legacy checkout ownership through the shared lifecycle owner
+        // before stopping. A retry resolves the same normalized Agent claim.
+        crate::agent_runtime_checkout::ensure(
+            state,
+            &body.plan.source,
+            &body.plan.source_authority,
+        )
+        .await?;
         state
             .store
             .admit_agent_runtime_transition(&body.plan)
@@ -112,9 +120,17 @@ async fn plan(
     let inspection = inspect_native_source(state, &source.selection, authority)
         .await
         .map_err(|error| error.code().to_string())?;
-    if !inspection.is_exited_exact() {
-        return Err("agent_project_move_source_must_be_stopped".into());
-    }
+    let source_stop_policy = if inspection.is_exited_exact() {
+        AgentRuntimeSourceStopPolicyV1::Preserve
+    } else {
+        let observed = inspection
+            .managed_stop_quiescence_fence()
+            .map_err(|_| "agent_runtime_source_busy".to_string())?;
+        AgentRuntimeSourceStopPolicyV1::PreserveObserved {
+            runtime_revision: observed.runtime_revision(),
+            observed_through_output_seq: observed.observed_through_output_seq(),
+        }
+    };
     let conversation = AgentProviderConversationPlanV1::from_option(
         authority.binding.provider_conversation_id.clone(),
     )
@@ -122,12 +138,16 @@ async fn plan(
     if conversation.as_option().is_none() {
         return Err("agent_runtime_provider_conversation_unavailable".into());
     }
-    if crate::agent_runtime_checkout::resolve(state, &source.selection, &source.authority)
-        .await?
-        .is_some()
-    {
-        return Err("agent_project_move_checkout_handoff_unsupported".into());
-    }
+    let source_checkout =
+        crate::agent_runtime_checkout::resolve(state, &source.selection, &source.authority)
+            .await?
+            .map(|checkout| {
+                if checkout.admission != dure_app::SessionCheckoutAdmissionV1::Open {
+                    return Err("agent_project_move_checkout_closing");
+                }
+                Ok(checkout.binding.retained_by_agent(agent_id))
+            })
+            .transpose()?;
     let source_agent = state
         .store
         .agent(agent_id)
@@ -181,7 +201,7 @@ async fn plan(
         idempotency_key: key.into(),
         source: selection.clone(),
         source_authority: source.authority,
-        source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
+        source_stop_policy,
         provider_conversation_ref: conversation,
         target_interaction_profile: selection.interaction_profile,
         target_execution_profile: selection.execution_profile.clone(),
@@ -189,6 +209,7 @@ async fn plan(
         workspace_move: Some(AgentRuntimeWorkspaceMoveV1 {
             source_agent,
             source_workspace,
+            source_checkout,
             target_project,
             target_workspace,
             registered_root_id: project.projection().root_id.clone(),
@@ -231,6 +252,39 @@ pub(super) async fn preflight(
         || project.projection().repository_id != movement.registered_repository_id
     {
         return Err("agent_project_move_project_changed".into());
+    }
+    // Verify the same provider adapter contract before stopping the source.
+    // Launch and recovery will consume this shared renderer again.
+    let launch = intent.effective_launch_selection();
+    let mut provider = state
+        .agent_providers
+        .session_launch_plan(
+            &intent.source.provider_id,
+            &intent.effective_permission_mode(),
+            launch.model.as_ref(),
+            launch.effort.as_ref(),
+            intent.provider_conversation_ref.as_option(),
+            hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+        )
+        .map_err(|error| error.code.as_str().to_owned())?
+        .ok_or("agent_runtime_native_profile_unavailable")?;
+    dure_provider_adapter::native_provider_project_move(
+        &intent.source.provider_id,
+        &mut provider,
+        std::path::Path::new(&movement.target_workspace.root_path),
+    )
+    .map_err(|error| error.as_str().to_owned())?;
+    if let Some((minimum, maximum_exclusive)) =
+        dure_provider_adapter::native_provider_project_move_version_range(
+            &intent.source.provider_id,
+        )
+    {
+        crate::provider_executable::require_version_range(
+            &provider.launch.executable,
+            minimum,
+            maximum_exclusive,
+        )
+        .await?;
     }
     let credential = state
         .credential_profiles

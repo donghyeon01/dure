@@ -49,7 +49,10 @@ import {
 	assertDureBackendRouteAuthority,
 	resolveSelectedDureBackendRouteAuthority,
 } from "@/lib/ipc/dureBackend";
-import { sameDureBackendRouteAuthority } from "@/lib/ipc/dureBackendRoute";
+import {
+	type DureBackendRouteAuthorityV1,
+	sameDureBackendRouteAuthority,
+} from "@/lib/ipc/dureBackendRoute";
 import { adoptCurrentManagedAgentCheckpoint } from "@/lib/sessions/managed/managedAgentCheckpointBinding";
 import { convergeManagedAgentRehost } from "@/lib/sessions/managed/managedAgentRehostConvergence";
 import { hmuxPaneConversationId } from "@/lib/terminal/terminalBinding";
@@ -62,6 +65,9 @@ export interface AgentRuntimeTransitionRequest {
 	sourceStopPolicy?: DureAgentRuntimeSourceStopPolicyV1;
 	expectedSourceRevision?: number;
 	expectedConversationId?: string;
+	/** Restrict recovery to the exact operation the user reviewed. */
+	expectedOperationId?: string;
+	expectedRouteAuthority?: DureBackendRouteAuthorityV1;
 	targetLaunchSelection?: DureAgentRuntimeLaunchSelectionTargetV1;
 	targetLaunchSelectionUpdate?: AgentRuntimeLaunchSelectionUpdateV1;
 	credentialAction?: AgentRuntimeCredentialAction;
@@ -84,6 +90,8 @@ export async function transitionAgentRuntime(
 		sourceStopPolicy = "preserve",
 		expectedSourceRevision,
 		expectedConversationId,
+		expectedOperationId,
+		expectedRouteAuthority,
 		targetLaunchSelection,
 		targetLaunchSelectionUpdate,
 		credentialAction,
@@ -129,6 +137,23 @@ export async function transitionAgentRuntime(
 		assertConversation,
 		rehostConvergence,
 	);
+	if (
+		expectedRouteAuthority &&
+		!sameDureBackendRouteAuthority(
+			expectedRouteAuthority,
+			observation.routeAuthority,
+		)
+	) {
+		throw new Error("client_agent_runtime_transition_conflict");
+	}
+	if (
+		expectedOperationId !== undefined &&
+		((observation.state !== "repair_required" &&
+			observation.state !== "transitioning") ||
+			observation.operationId !== expectedOperationId)
+	) {
+		throw new Error("client_agent_runtime_transition_conflict");
+	}
 	if (sourcePresentation && observer?.onSourceProjection) {
 		try {
 			observer.onSourceProjection(sourcePresentation);
@@ -483,7 +508,7 @@ function runtimeMutationSource(
 	throw new Error("client_agent_runtime_transition_unavailable");
 }
 
-async function observeAgentRuntimeAction(
+export async function observeAgentRuntimeAction(
 	agentId: string,
 	assertConversation: (observed: string | null | undefined) => void,
 	rehostConvergence: Promise<unknown>,

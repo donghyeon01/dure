@@ -1,0 +1,170 @@
+// @vitest-environment jsdom
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
+import { t } from "@/lib/i18n";
+
+const f = vi.hoisted(() => ({
+	prepare: vi.fn(),
+	preview: vi.fn(),
+	apply: vi.fn(),
+	status: vi.fn(),
+	repair: vi.fn(),
+}));
+vi.mock("@/lib/agents/agentProjectMove", () => ({
+	prepareAgentProjectMove: f.prepare,
+}));
+vi.mock("@/components/ui/select-field", () => ({
+	SelectField: ({
+		value,
+		onValueChange,
+		children,
+		disabled,
+		...props
+	}: {
+		value: string;
+		onValueChange(value: string): void;
+		children: React.ReactNode;
+		disabled: boolean;
+		"aria-label": string;
+	}) => (
+		<select
+			aria-label={props["aria-label"]}
+			value={value}
+			disabled={disabled}
+			onChange={(e) => onValueChange(e.target.value)}
+		>
+			<option value="" />
+			{children}
+		</select>
+	),
+	SelectOption: ({
+		value,
+		children,
+	}: {
+		value: string;
+		children: React.ReactNode;
+	}) => <option value={value}>{children}</option>,
+}));
+const plan = {
+	workspaceMove: {
+		sourceWorkspace: { rootPath: "/old" },
+		targetProject: { projectId: "new" },
+		targetWorkspace: { rootPath: "/new" },
+	},
+};
+beforeEach(() => {
+	vi.clearAllMocks();
+	f.prepare.mockResolvedValue({
+		projects: [{ id: "new", displayName: "New" }],
+		complete: true,
+		preview: f.preview,
+		apply: f.apply,
+		status: f.status,
+		repair: f.repair,
+	});
+	f.preview.mockResolvedValue(plan);
+	f.apply.mockResolvedValue(undefined);
+	f.repair.mockResolvedValue(undefined);
+});
+afterEach(cleanup);
+async function preview() {
+	render(<AgentProjectMove agentId="agent-1" />);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.title") }),
+	);
+	await screen.findByRole("option", { name: "New" });
+	fireEvent.change(screen.getByRole("combobox"), { target: { value: "new" } });
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+	);
+	await screen.findByText("/new");
+}
+describe("project move confirmation", () => {
+	it("requires a separate confirmation after displaying the exact folders", async () => {
+		await preview();
+		expect(f.apply).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.confirm") }),
+		);
+		await waitFor(() => expect(f.apply).toHaveBeenCalledWith(plan));
+	});
+	it("retains an uncertain plan and offers repair only after an exact status check", async () => {
+		f.apply.mockRejectedValue(new Error("response lost"));
+		f.status.mockResolvedValue("repair_required");
+		await preview();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.confirm") }),
+		);
+		await screen.findByText(t("agents.projectMove.unconfirmed"));
+		expect(f.preview).toHaveBeenCalledOnce();
+		expect(
+			screen.queryByRole("button", { name: t("agents.projectMove.repair") }),
+		).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.status") }),
+		);
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: t("agents.projectMove.repair"),
+			}),
+		);
+		await waitFor(() => expect(f.repair).toHaveBeenCalledWith(plan));
+	});
+});
+
+it("recovers durable repair controls after the pane remounts without another preview", async () => {
+	await preview();
+	cleanup();
+	f.prepare.mockResolvedValue({
+		projects: [],
+		complete: true,
+		recoveredPlan: plan,
+		recoveredStatus: "repair_required",
+		preview: f.preview,
+		apply: f.apply,
+		status: f.status,
+		repair: f.repair,
+	});
+	render(<AgentProjectMove agentId="agent-1" />);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.title") }),
+	);
+	fireEvent.click(
+		await screen.findByRole("button", { name: t("agents.projectMove.repair") }),
+	);
+	await waitFor(() => expect(f.repair).toHaveBeenCalledWith(plan));
+	expect(f.preview).toHaveBeenCalledOnce();
+});
+it("refreshes a locally stale preparation without closing the dialog", async () => {
+	f.preview.mockRejectedValueOnce(
+		Object.assign(new Error("client_project_move_preview_stale"), {
+			code: "client_project_move_preview_stale",
+			submitted: false,
+		}),
+	);
+	render(<AgentProjectMove agentId="agent-1" />);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.title") }),
+	);
+	await screen.findByRole("option", { name: "New" });
+	fireEvent.change(screen.getByRole("combobox"), { target: { value: "new" } });
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+	);
+	fireEvent.click(
+		await screen.findByRole("button", { name: t("common.retry") }),
+	);
+	await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(2));
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+	);
+	await screen.findByText("/new");
+	expect(f.apply).not.toHaveBeenCalled();
+});

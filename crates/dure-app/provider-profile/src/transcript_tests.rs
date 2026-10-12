@@ -93,3 +93,57 @@ fn partial_append_is_incomplete_and_new_prompt_clears_previous_final() {
     assert_eq!(partial.final_response, None);
     assert_eq!(partial.entries.last().unwrap().text, "next");
 }
+
+#[test]
+fn project_move_claude_reads_exact_history_in_its_selected_account_without_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let account = root.path().join("account-a");
+    let project = account.join("projects/old-project");
+    fs::create_dir_all(&project).unwrap();
+    let id = "019f0000-0000-7000-8000-000000000185";
+    let history = project.join(format!("{id}.jsonl"));
+    let bytes = format!(
+        "{{\"type\":\"user\",\"sessionId\":\"{id}\",\"message\":{{\"content\":\"retain me\"}}}}\n"
+    );
+    fs::write(&history, &bytes).unwrap();
+    assert_eq!(
+        preflight_project_move_history("claude", Some(account.clone()), id),
+        Ok(())
+    );
+    assert_eq!(fs::read_to_string(&history).unwrap(), bytes);
+    assert_eq!(
+        preflight_project_move_history("claude", Some(root.path().join("account-b")), id),
+        Err("agent_project_move_history_unavailable")
+    );
+    fs::write(&history, "{\"type\":\"user\",\"sessionId\":\"other\"}\n").unwrap();
+    assert_eq!(
+        preflight_project_move_history("claude", Some(account), id),
+        Err("agent_project_move_history_unavailable")
+    );
+}
+
+#[test]
+fn project_move_claude_refuses_ambiguous_history_and_non_regular_transcripts() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "019f0000-0000-7000-8000-000000000185";
+    for project in ["first", "second"] {
+        let directory = root.path().join("projects").join(project);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(format!("{id}.jsonl")),
+            format!("{{\"type\":\"user\",\"sessionId\":\"{id}\"}}\n"),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        preflight_project_move_history("claude", Some(root.path().into()), id),
+        Err("agent_project_move_history_ambiguous")
+    );
+    let second = root.path().join(format!("projects/second/{id}.jsonl"));
+    fs::remove_file(&second).unwrap();
+    fs::create_dir(second).unwrap();
+    assert_eq!(
+        preflight_project_move_history("claude", Some(root.path().into()), id),
+        Err("agent_project_move_history_unavailable")
+    );
+}

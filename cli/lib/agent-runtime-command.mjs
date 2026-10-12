@@ -41,9 +41,10 @@ retained; this command never discards active work. Failed stopped targets are
 replaced through the same backend transition as the app.
 Switch and wake retain the original project and working folder. --project,
 --path and --cwd are refused before backend access. Use dure runs move AGENT
---project PROJECT --json to preview moving a stopped native Codex conversation
-on the same backend without retained checkout ownership. Keep its exact Apply
-command for retries; Claude and live-source project moves are not supported.
+--project PROJECT --json to preview an idle or stopped native Claude or Codex
+conversation on the same backend. Claude requires CLI 2.1.223–2.1.284 and exact history.
+Original checkout ownership is retained. Keep the exact Apply command for retries;
+structured project moves and unobservable sources remain unsupported.
 Switch --expected-revision fences the observed source without changing its
 account. Project-move repair commands use it to resume in the source folder.
 An explicit --account changes credentials through that same transition. A named

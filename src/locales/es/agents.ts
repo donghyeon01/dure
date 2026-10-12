@@ -356,4 +356,20 @@ export const agents: Record<string, string> = {
 	"agents.worktree.useExisting": "Usar este worktree existente",
 	"agents.account.conversationUnavailable":
 		"Dure no puede identificar esta conversación para continuarla con otra cuenta. Mantén abierto este agente. Para continuar ahora, crea un agente nuevo y elige una cuenta con cuota disponible.",
+	"agents.projectMove.title": "Mover conversación a otro proyecto",
+	"agents.projectMove.description":
+		"Reinicia esta conversación inactiva o detenida en otro proyecto registrado. Se conservan su identidad, los archivos y el checkout original. Cualquier actividad nueva invalida la vista previa.",
+	"agents.projectMove.destination": "Proyecto de destino",
+	"agents.projectMove.source": "Carpeta original",
+	"agents.projectMove.preview": "Vista previa del traslado",
+	"agents.projectMove.confirm": "Reiniciar y mover",
+	"agents.projectMove.partial":
+		"Solo se muestra una parte de la lista de proyectos.",
+	"agents.projectMove.failed": "No se pudo preparar el traslado.",
+	"agents.projectMove.unconfirmed":
+		"El traslado no está confirmado. Reintenta este mismo plan o consulta el estado del entorno antes de otro traslado.",
+	"agents.projectMove.status": "Consultar estado",
+	"agents.projectMove.repair": "Reanudar en la carpeta original",
+	"agents.projectMove.versionRequired":
+		"No se pudo verificar una versión segura del proveedor. Mover Claude requiere actualmente Claude Code 2.1.223–2.1.284; versiones posteriores pueden conectarse a una sesión en segundo plano en su carpeta original.",
 };

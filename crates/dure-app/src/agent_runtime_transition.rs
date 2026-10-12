@@ -485,6 +485,10 @@ pub struct AgentRuntimeTransitionIntentV1 {
 pub struct AgentRuntimeWorkspaceMoveV1 {
     pub source_agent: crate::AgentRecordV1,
     pub source_workspace: crate::WorkspaceRecordV1,
+    /// The original checkout remains retained by this Agent across project
+    /// changes. It is never replaced by a claim inferred from the target cwd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_checkout: Option<crate::SessionCheckoutBindingV1>,
     pub target_project: crate::ProjectRecordV1,
     pub target_workspace: crate::WorkspaceRecordV1,
     pub registered_root_id: String,
@@ -538,7 +542,11 @@ impl AgentRuntimeTransitionIntentV1 {
                 || self.target_interaction_profile != AgentInteractionProfileV1::NativeCli
                 || self.source.execution_profile != self.target_execution_profile
                 || self.provider_conversation_ref.as_option().is_none()
-                || self.source_stop_policy != AgentRuntimeSourceStopPolicyV1::Preserve
+                || !self.source_stop_policy.requires_idle()
+                || movement.source_checkout.as_ref().is_some_and(|checkout| {
+                    !matches!(&checkout.identity.owner, crate::SessionCheckoutOwnerV1::Agent { agent_id, .. }
+                        if agent_id == &self.source.agent_id)
+                })
             {
                 return Err(invalid(
                     "workspaceMove",

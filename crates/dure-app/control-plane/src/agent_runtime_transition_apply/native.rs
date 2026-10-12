@@ -142,7 +142,12 @@ pub(super) async fn stop_source(
         if inspection.is_exited_exact() {
             break;
         }
-        if transition.intent.workspace_move.is_some() {
+        // Legacy stopped-only move plans cannot acquire permission to stop a
+        // later live source. New moves carry their immutable idle observation.
+        if transition.intent.workspace_move.is_some()
+            && transition.intent.source_stop_policy
+                == dure_app::AgentRuntimeSourceStopPolicyV1::Preserve
+        {
             return Err(SourceStopFailure::SourceRetained);
         }
         let quiescence = inspection

@@ -4,11 +4,12 @@ use agent_runtime_transition_apply::project_move;
 #[tokio::test]
 #[ignore = "isolated native project move; use scripts/qa/hmux-control-plane-smoke.mjs"]
 async fn project_move_uses_real_hmux() {
-    project_move_case(false).await;
-    project_move_case(true).await;
+    project_move_case(false, false).await;
+    project_move_case(false, true).await;
+    project_move_case(true, false).await;
 }
 
-async fn project_move_case(reject_after_start: bool) {
+async fn project_move_case(reject_after_start: bool, live: bool) {
     let (root, mut state, _, _) = fixture(Vec::new()).await;
     let destination = crate::workspace_git::tests::repository().await;
     let destination_root = destination.path().canonicalize().unwrap();
@@ -18,6 +19,11 @@ async fn project_move_case(reject_after_start: bool) {
     fs::write(root.path().join("codex-fixture"), format!(
         "#!/bin/sh\nif [ \"$PWD\" = '{}' ]; then printf '%s\\n' \"$PWD\" \"$@\" >> '{}'; exec sleep 120; fi\nif [ ! -e '{}' ]; then touch '{}'; exit 0; fi\nexec sleep 120\n",
         destination_root.display(), marker.display(), root.path().join("source-exited").display(), root.path().join("source-exited").display())).unwrap();
+    if live {
+        fs::write(root.path().join("codex-fixture"), format!(
+            "#!/bin/sh\nif [ \"$PWD\" = '{}' ]; then printf '%s\\n' \"$PWD\" \"$@\" >> '{}'; fi\nexec sleep 120\n",
+            destination_root.display(), marker.display())).unwrap();
+    }
     register_project(
         &state.projects_catalog_path,
         "move-destination".into(),
@@ -52,6 +58,10 @@ async fn project_move_case(reject_after_start: bool) {
         .await
         .unwrap()
         .unwrap();
+    if live {
+        state_reporter::report(&hmux, &source, hmux_client::AgentRuntimeActivity::Waiting,
+            hmux_client::AgentRuntimeAttention::None, true);
+    }
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if query_hmux_for_runtime_transition(
@@ -61,7 +71,7 @@ async fn project_move_case(reject_after_start: bool) {
                 &authority_stop_fence(&authority),
             )
             .await
-            .is_ok_and(|observed| observed.is_exited_exact())
+            .is_ok_and(|observed| if live { observed.managed_stop_quiescence_fence().is_ok() } else { observed.is_exited_exact() })
             {
                 break;
             }
@@ -72,6 +82,10 @@ async fn project_move_case(reject_after_start: bool) {
     .unwrap();
     let preview = project_move::preview(&state, serde_json::from_value(json!({"schemaVersion": 1, "agentId": agent, "projectId": "move-destination", "idempotencyKey": "native-project-move"})).unwrap()).await.unwrap();
     assert_eq!(hmux.requests().len(), 1);
+    if live {
+        assert!(preview["plan"]["sourceStopPolicy"]["preserve_observed"].is_object());
+        assert_eq!(hmux.session(&source).lifecycle, hmux_client::SessionLifecycle::Ready);
+    }
     let body = json!({"schemaVersion": 1, "plan": preview["plan"], "confirmRestart": true});
     if reject_after_start {
         let pool = sqlx::SqlitePool::connect_with(
