@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
+import { nativeWindowCornerRadius } from "@/lib/ipc";
 import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import { subscribeCurrentWindowResize } from "@/lib/workspace/window/currentWindowResize";
 
@@ -13,14 +14,44 @@ import { subscribeCurrentWindowResize } from "@/lib/workspace/window/currentWind
  * 네이티브 모서리는 창의 `windowEffects.radius`가 깎는다
  * (`windows.ts`의 `GLASS_WINDOW_NATIVE_OPTIONS`). 여기 CSS 반경은 그 값과 같아야
  * 한다 — 어긋난 만큼 모서리에 쐐기가 생기고, `windows.test.ts`가 그걸 잡는다.
+ * 창을 만든 뒤에는 둘 다 shellCornerRadius를 따른다(CSS 변수와 useNativeShellGlass).
  */
 /**
  * 창 모서리 반경. macOS 네이티브 창을 실측해서 맞춘 값이다(2026-08-01):
  * 같은 스크린샷 안에서 네이티브 앱 창의 좌상단 호는 이미지 34~36px이고, 우리
  * 창(당시 10px)의 호가 27.6px이었다 — 배율 2.76을 적용하면 12~13pt다.
  * 그전 값 10px은 여기서 두 단 모자랐다.
+ *
+ * 지금은 기본값이자 하한이다. macOS 27은 투명 창도 시스템 반경(16pt)으로 직접
+ * 깎는데, 셸이 그보다 덜 둥글면 가장자리 링의 호가 그 마스크 바깥에 놓여 네
+ * 모서리마다 잘려 나갔다(2026-10-12 사용자 제보 — 창 캡처에서 12px 링이 16pt
+ * 호 구간에서 사라짐). 실제 반경은 shellCornerRadius가 정한다.
  */
 export const SHELL_CORNER_RADIUS = 12;
+
+/** 셸 반경을 담는 CSS 변수. 기본값은 index.css, 실제 값은 useWindowShellShape가 건다. */
+const SHELL_CORNER_RADIUS_VAR = "--shell-corner-radius";
+
+/** 시스템 반경으로 믿는 상한 — 비공개 접근자가 엉뚱한 값을 내도 셸이 알약이 되지 않는다. */
+const MAX_SYSTEM_CORNER_RADIUS = 32;
+
+/**
+ * 셸이 쓸 모서리 반경. 시스템이 창을 깎는 반경보다 작으면 안 된다 — 작으면
+ * 시스템 마스크가 셸 가장자리 링을 모서리마다 잘라 낸다. 시스템 값이 없거나
+ * 기본값보다 작으면(이전 macOS) 기본값을 그대로 쓴다.
+ */
+export function shellCornerRadius(systemRadius: number | null | undefined): number {
+  return systemRadius != null &&
+    Number.isFinite(systemRadius) &&
+    systemRadius <= MAX_SYSTEM_CORNER_RADIUS
+    ? Math.max(SHELL_CORNER_RADIUS, systemRadius)
+    : SHELL_CORNER_RADIUS;
+}
+
+/** 이 창이 지금 써야 할 셸 반경. 묻지 못하면 기본값이다. */
+export function loadShellCornerRadius(): Promise<number> {
+  return nativeWindowCornerRadius().then(shellCornerRadius, () => SHELL_CORNER_RADIUS);
+}
 
 /**
  * 셸 표면의 모서리/그림자. 전체화면에서는 전부 뗀다.
@@ -50,7 +81,7 @@ export function shellChromeClass(
   macPlatform = isMacPlatform(),
 ): string {
   return windowUsesCustomShell(fullscreen, macPlatform)
-    ? "rounded-[12px] shadow-shell"
+    ? "rounded-shell shadow-shell"
     : "";
 }
 
@@ -66,7 +97,7 @@ export function shellEdgeOverlayClass(
   macPlatform = isMacPlatform(),
 ): string {
   if (!windowUsesCustomShell(fullscreen, macPlatform)) return "";
-  return "pointer-events-none absolute inset-0 z-50 rounded-[12px] inset-ring-1 inset-ring-foreground/15";
+  return "pointer-events-none absolute inset-0 z-50 rounded-shell inset-ring-1 inset-ring-foreground/15";
 }
 
 /**
@@ -219,6 +250,20 @@ export function useWindowShellShape(): boolean {
       stopResize();
     };
   }, []);
+
+  // 창 모드로 돌아올 때마다 시스템 반경을 다시 읽는다. 전체화면에는 창 모서리가
+  // 없으므로 읽지 않는다.
+  useEffect(() => {
+    if (fullscreen) return;
+    let disposed = false;
+    void loadShellCornerRadius().then((radius) => {
+      if (disposed) return;
+      document.documentElement.style.setProperty(SHELL_CORNER_RADIUS_VAR, `${radius}px`);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [fullscreen]);
 
   return fullscreen;
 }

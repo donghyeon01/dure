@@ -404,6 +404,7 @@ pub fn run() {
             crate::worktree_release::complete_worktree_presentation,
             crate::native_title_bar::set_native_title_bar_colors,
             crate::shell_corner::set_shell_glass,
+            crate::shell_corner::native_window_corner_radius,
             crate::traffic_lights::set_traffic_light_drop,
             crate::dropped_files::save_temp_file,
             crate::dropped_files::save_temp_files,

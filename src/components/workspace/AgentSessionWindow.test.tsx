@@ -178,9 +178,9 @@ vi.mock("@/lib/platform/windowAppearance", () => ({
 	useNativeWindowTheme: vi.fn(),
 }));
 vi.mock("@/lib/workspace/window/windowShellShape", () => ({
-	shellChromeClass: () => "rounded-[12px] shadow-shell",
+	shellChromeClass: () => "rounded-shell shadow-shell",
 	shellEdgeOverlayClass: () =>
-		"pointer-events-none absolute inset-0 z-50 rounded-[12px] inset-ring-1 inset-ring-foreground/15",
+		"pointer-events-none absolute inset-0 z-50 rounded-shell inset-ring-1 inset-ring-foreground/15",
 	useWindowShellShape: () => false,
 }));
 vi.mock("@/components/settings/useAppLanguage", () => ({

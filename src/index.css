@@ -113,6 +113,7 @@
     --color-glass-edge: var(--glass-edge);
     --color-glass-terminal-bg: var(--glass-terminal-bg);
     --radius-pane: var(--glass-radius-pane);
+    --radius-shell: var(--shell-corner-radius);
     --radius-usage-popover: 0.875rem;
     --shadow-pane: var(--glass-shadow-pane);
     --shadow-pane-light: var(--glass-shadow-pane-light);
@@ -142,6 +143,9 @@
        워드마크가 위아래 12px, 16px 토글 아이콘이 위아래 14px으로 앉는다.
        예전 34px은 여기서 10px 낮았다(2026-08-01 실측: 워드마크 중심 17px). */
     --app-chrome-bar-height: 44px;
+    /* 창 셸 모서리. SHELL_CORNER_RADIUS(windowShellShape.ts)와 같은 기본값이고,
+       창이 뜨면 useWindowShellShape가 시스템 반경에 맞춰 다시 건다. */
+    --shell-corner-radius: 12px;
     --background: oklch(1 0 0);
     /* Light ink is neutral-900, one step off black (owner decision
        2026-09-10, from the light-ink comp): the shadcn 0.145 read heavy on

@@ -666,7 +666,7 @@ export const cliRequestComplete = (reqId: string, result: unknown) =>
 /**
  * 셸 유리(NSVisualEffectView)의 네이티브 속성을 앱 상태에 맞춘다.
  *
- * - `radius`: 전체화면 0, 창 모드 SHELL_CORNER_RADIUS.
+ * - `radius`: 전체화면 0, 창 모드 셸의 CSS 반경(`shellCornerRadius`).
  * - `dark`: 유리 material의 외형. 창 NSAppearance만 맞추면 이 뷰까지 전파되지
  *   않는 경우가 있어 직접 박는다 — 어긋나면 다크 UI 뒤에 라이트 material이
  *   깔려 사이드바가 통째로 밝게 씻긴다.
@@ -677,6 +677,10 @@ export const cliRequestComplete = (reqId: string, result: unknown) =>
  */
 export const setShellGlass = (radius: number, dark: boolean) =>
 	invoke<void>("set_shell_glass", { radius, dark });
+
+/** macOS가 이 창을 깎는 모서리 반경(pt). macOS가 아니거나 알 수 없으면 null. */
+export const nativeWindowCornerRadius = () =>
+	invoke<number | null>("native_window_corner_radius");
 
 /** macOS 신호등 중심을 창 위에서 `center`px, 왼쪽에서 `left`px 지점에 놓는다
  *  (각각 0 이하면 그 축은 손대지 않음). */

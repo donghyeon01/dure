@@ -40,6 +40,7 @@ vi.mock("@/lib/ipc/system", () => ({
 	observeCurrentWindowLiveResize: native.observeCurrentWindowLiveResize,
 }));
 vi.mock("@/lib/ipc", () => ({
+	nativeWindowCornerRadius: vi.fn(async () => null),
 	setShellGlass: native.setShellGlass,
 	setTrafficLightDrop: native.setTrafficLightDrop,
 }));

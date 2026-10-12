@@ -13,29 +13,36 @@ import {
   collapsedToggleWorkspaceInset,
   TRAFFIC_LIGHT_CENTER,
   shellChromeClass,
+  shellCornerRadius,
   shellEdgeOverlayClass,
   trafficLightSpacerWidth,
   useWindowShellShape,
 } from "@/lib/workspace/window/windowShellShape";
 
-const { isFullscreen, onResized } = vi.hoisted(() => ({
+const { isFullscreen, onResized, nativeWindowCornerRadius } = vi.hoisted(() => ({
   isFullscreen: vi.fn(),
   onResized: vi.fn(),
+  nativeWindowCornerRadius: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ isFullscreen, onResized }),
 }));
+vi.mock("@/lib/ipc", () => ({ nativeWindowCornerRadius }));
+
+const indexCss = () => readFileSync(join(__dirname, "../../../index.css"), "utf8");
 
 
 describe("shell shape", () => {
   beforeEach(() => {
     isFullscreen.mockReset().mockResolvedValue(false);
     onResized.mockReset().mockResolvedValue(() => {});
+    nativeWindowCornerRadius.mockReset().mockResolvedValue(null);
+    document.documentElement.style.removeProperty("--shell-corner-radius");
   });
 
   it("창 모드에서는 모서리·그림자를 그린다", () => {
-    expect(shellChromeClass(false, true)).toContain("rounded-[12px]");
+    expect(shellChromeClass(false, true)).toContain("rounded-shell");
     expect(shellChromeClass(false, true)).toContain("shadow-shell");
   });
 
@@ -71,10 +78,27 @@ describe("shell shape", () => {
     expect(shellEdgeOverlayClass(false, false)).toBe("");
   });
 
-  it("CSS 반경은 창의 windowEffects.radius와 같은 상수를 쓴다", () => {
-    expect(shellChromeClass(false, true)).toContain(
-      `rounded-[${SHELL_CORNER_RADIUS}px]`,
-    );
+  /** 창은 SHELL_CORNER_RADIUS로 만들어진다(windowEffects.radius). 시스템 반경을
+   *  읽기 전 첫 프레임도 그 값이어야 모서리에 쐐기가 생기지 않는다. */
+  it("CSS 반경의 기본값은 창의 windowEffects.radius와 같은 상수다", () => {
+    expect(shellChromeClass(false, true)).toContain("rounded-shell");
+    expect(shellEdgeOverlayClass(false, true)).toContain("rounded-shell");
+    expect(indexCss()).toContain("--radius-shell: var(--shell-corner-radius);");
+    const declared = indexCss().match(/--shell-corner-radius:\s*(\d+)px/)?.[1];
+    expect(Number(declared)).toBe(SHELL_CORNER_RADIUS);
+  });
+
+  /** macOS 27은 투명 창도 16pt로 깎는다. 셸이 12px로 남으면 가장자리 링의
+   *  호가 마스크 밖에 놓여 네 모서리에서 잘린다(2026-10-12 사용자 제보). */
+  it("셸 반경은 시스템이 창을 깎는 반경보다 작지 않다", () => {
+    expect(shellCornerRadius(16)).toBe(16);
+    expect(shellCornerRadius(10)).toBe(SHELL_CORNER_RADIUS);
+    expect(shellCornerRadius(null)).toBe(SHELL_CORNER_RADIUS);
+    expect(shellCornerRadius(undefined)).toBe(SHELL_CORNER_RADIUS);
+    expect(shellCornerRadius(Number.NaN)).toBe(SHELL_CORNER_RADIUS);
+    expect(shellCornerRadius(Number.POSITIVE_INFINITY)).toBe(SHELL_CORNER_RADIUS);
+    // 비공개 접근자가 엉뚱한 값을 내도 셸을 알약으로 만들지 않는다.
+    expect(shellCornerRadius(500)).toBe(SHELL_CORNER_RADIUS);
   });
 
   it("신호등 자리는 macOS 창 모드에서만 82px — 전체화면에서는 탭이 왼쪽에 붙는다", () => {
@@ -120,15 +144,33 @@ describe("shell shape", () => {
     expect(chromeSidebarColumnWidth(320)).toBe(320);
   });
 
-  it("전체화면 여부만 읽는다 — 모서리는 네이티브 windowEffects가 깎는다", async () => {
-    // Given: 창 모드인 Tauri 창
+  it("창 모드에서는 셸 반경을 시스템 반경에 맞춘다", async () => {
+    // Given: macOS 27처럼 창을 16pt로 깎는 Tauri 창
+    nativeWindowCornerRadius.mockResolvedValue(16);
+
     // When: 셸 모양 상태를 구독한다
     const { result } = renderHook(() => useWindowShellShape());
     await waitFor(() => expect(isFullscreen).toHaveBeenCalledOnce());
 
-    // Then: 창 모드로 판정한다. 모서리 자체는 창의 windowEffects radius가
-    // 깎으므로(windows.ts) 여기서 네이티브를 호출할 일이 없다.
+    // Then: 창 모드로 판정하고, CSS 반경을 시스템 반경으로 건다
     await waitFor(() => expect(result.current).toBe(false));
+    await waitFor(() =>
+      expect(
+        document.documentElement.style.getPropertyValue("--shell-corner-radius"),
+      ).toBe("16px"),
+    );
+  });
+
+  it("전체화면에서는 시스템 반경을 읽지 않는다 — 창 모서리가 없다", async () => {
+    // Given: 전체화면인 창
+    isFullscreen.mockResolvedValue(true);
+
+    // When: 셸 모양 상태가 전체화면으로 정해진다
+    const { result } = renderHook(() => useWindowShellShape());
+    await waitFor(() => expect(result.current).toBe(true));
+
+    // Then: 첫 렌더(창 모드 가정)의 한 번 뒤로는 다시 묻지 않는다
+    expect(nativeWindowCornerRadius).toHaveBeenCalledOnce();
   });
 });
 

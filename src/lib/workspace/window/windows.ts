@@ -16,6 +16,7 @@ import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import {
   SHELL_CORNER_RADIUS,
   TRAFFIC_LIGHT_CENTER,
+  loadShellCornerRadius,
 } from "@/lib/workspace/window/windowShellShape";
 import { subscribeCurrentWindowFocus } from "@/lib/workspace/window/currentWindowFocus";
 import {
@@ -118,7 +119,8 @@ let counter = 0;
  * Keep native glass options aligned with the main window configuration.
  * Standard windowEffects let macOS clip blur, corners and shadow together;
  * shaping a transparent window did not clip its separate blur/shadow layers.
- * Match SHELL_CORNER_RADIUS so native material and CSS cannot leave wedges.
+ * Match SHELL_CORNER_RADIUS so native material and CSS cannot leave wedges;
+ * useNativeShellGlass later moves both to shellCornerRadius.
  * Choose material from observed transparency in both appearances, not its name;
  * the sidebar material previously obscured the backdrop in dark appearance.
  */
@@ -131,8 +133,11 @@ let counter = 0;
  * 꽉 채운 창에서 그 반경만큼 네 모서리가 파여 뒤가 비쳤다(사용자 보고,
  * 2026-08-01).
  */
-export function nativeShellRadius(fullscreen: boolean): number {
-  return fullscreen ? 0 : SHELL_CORNER_RADIUS;
+export function nativeShellRadius(
+  fullscreen: boolean,
+  cornerRadius = SHELL_CORNER_RADIUS,
+): number {
+  return fullscreen ? 0 : cornerRadius;
 }
 
 /**
@@ -152,10 +157,19 @@ export function nativeShellRadius(fullscreen: boolean): number {
  */
 export function useNativeShellGlass(fullscreen: boolean, dark: boolean): void {
   useEffect(() => {
+    let disposed = false;
     // 실패해도 앱은 정상 동작한다 — 모서리·외형만 예전 값으로 남는다.
-    setShellGlass(nativeShellRadius(fullscreen), dark).catch((error) => {
-      console.warn("[glass] failed to match the shell glass to app state", error);
-    });
+    loadShellCornerRadius()
+      .then((radius) => {
+        if (disposed) return;
+        return setShellGlass(nativeShellRadius(fullscreen, radius), dark);
+      })
+      .catch((error) => {
+        console.warn("[glass] failed to match the shell glass to app state", error);
+      });
+    return () => {
+      disposed = true;
+    };
   }, [fullscreen, dark]);
 }
 

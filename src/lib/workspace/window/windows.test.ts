@@ -172,6 +172,9 @@ describe("glass window native options", () => {
   it("전체화면에서는 네이티브 모서리 반경을 0으로 편다", () => {
     expect(nativeShellRadius(true)).toBe(0);
     expect(nativeShellRadius(false)).toBe(SHELL_CORNER_RADIUS);
+    // 창을 만든 뒤에는 CSS와 같은 시스템 맞춤 반경을 따른다(shellCornerRadius).
+    expect(nativeShellRadius(false, 16)).toBe(16);
+    expect(nativeShellRadius(true, 16)).toBe(0);
   });
 
   it("메인 창 설정과 런타임 창 설정이 같다", () => {

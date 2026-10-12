@@ -2461,6 +2461,7 @@ pub fn run() {
             share::share_file,
             native_title_bar::set_native_title_bar_colors,
             shell_corner::set_shell_glass,
+            shell_corner::native_window_corner_radius,
             traffic_lights::set_traffic_light_drop,
             window_resize::toggle_window_maximize_atomic,
             window_resize::observe_current_window_live_resize,

@@ -61,9 +61,37 @@ pub async fn set_shell_glass(
     }
 }
 
+/// macOS가 이 창을 깎는 모서리 반경(pt). 알 수 없거나 macOS가 아니면 `None`.
+///
+/// macOS 27은 투명 창도 시스템 반경(16pt)으로 직접 깎는다. 셸의 CSS 반경이
+/// 그보다 작으면 가장자리 링의 호가 마스크 바깥에 놓여 네 모서리마다 잘려
+/// 나간다(2026-10-12 사용자 제보). 프런트엔드는 이 값으로 셸 반경을 맞춘다
+/// (windowShellShape.ts `shellCornerRadius`).
+#[tauri::command]
+pub async fn native_window_corner_radius(
+    window: tauri::WebviewWindow,
+) -> Result<Option<f64>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let target = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let _ = tx.send(macos::window_corner_radius(&target));
+            })
+            .map_err(|error| error.to_string())?;
+        rx.recv().map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Ok(None)
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
-    use objc2::msg_send;
+    use objc2::{msg_send, sel};
     use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSView,
@@ -139,5 +167,23 @@ mod macos {
             }
         }
         Ok(())
+    }
+
+    /// NSWindow의 비공개 접근자 `_cornerRadius` — AppKit이 창 테두리와 마스크에
+    /// 쓰는 값이다. 접근자가 없어진 macOS에서는 `None`이라 셸이 기본 반경을 쓴다.
+    pub(super) fn window_corner_radius(window: &tauri::WebviewWindow) -> Option<f64> {
+        let window_ptr = window.ns_window().ok()?;
+        if window_ptr.is_null() {
+            return None;
+        }
+        unsafe {
+            let ns_window = &*(window_ptr as *const objc2::runtime::AnyObject);
+            let responds: bool = msg_send![ns_window, respondsToSelector: sel!(_cornerRadius)];
+            if !responds {
+                return None;
+            }
+            let radius: f64 = msg_send![ns_window, _cornerRadius];
+            radius.is_finite().then_some(radius)
+        }
     }
 }
