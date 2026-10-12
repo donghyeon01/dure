@@ -15,6 +15,7 @@ import {
 } from "@/contracts/terminalStateProtocol";
 import { TERMINAL_STATE_WHEEL_PROTOCOL_MINOR } from "../protocol/terminalStateLimits";
 import { encodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
+import { terminalKeyboardKeyIsText } from "./terminalKeyboardText";
 import type { TerminalViewportIntentFence } from "./terminalViewportFrameReplica";
 
 const textEncoder = new TextEncoder();
@@ -67,9 +68,10 @@ export interface TerminalPointerIntent {
 }
 
 export function shouldSendTerminalKey(event: TerminalKeyEvent): boolean {
-	if (event.isComposing || event.key === "Process") return false;
+	if (event.isComposing || event.key === "Process" || event.key === "Dead")
+		return false;
 	if (event.metaKey && !event.ctrlKey) return false;
-	return event.key.length !== 1 || event.ctrlKey || event.altKey;
+	return !terminalKeyboardKeyIsText(event.key) || event.ctrlKey || event.altKey;
 }
 
 export function encodeTerminalTextIntent(

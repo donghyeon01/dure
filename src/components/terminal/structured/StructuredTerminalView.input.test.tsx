@@ -124,6 +124,69 @@ function registerTestCleanup(cleanup: () => void): () => void {
 	return dispose;
 }
 
+describe("text-bearing keyboard events", () => {
+	it("leaves a dead-key accent to one committed composition", async () => {
+		const { view } = await bootTerminalWithFrame();
+		const input = terminalInput(view);
+		input.focus();
+		mocks.send.mockClear();
+		const down = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			key: "Dead",
+			code: "Quote",
+			altKey: true,
+		});
+		fireEvent(input, down);
+		expect(down.defaultPrevented).toBe(false);
+		expect(sentInputIntents("key")).toHaveLength(0);
+		fireEvent.compositionStart(input, { data: "´" });
+		fireEvent.input(input, {
+			target: { value: "é" },
+			inputType: "insertCompositionText",
+			isComposing: true,
+		});
+		expect(sentTextPayloads()).toEqual([]);
+		fireEvent.compositionEnd(input, { data: "é" });
+		fireEvent.input(input, {
+			target: { value: "é" },
+			inputType: "insertFromComposition",
+		});
+		expect(sentTextPayloads()).toEqual(["é"]);
+		expect(sentInputIntents("key")).toHaveLength(0);
+	});
+
+	it.each(["docs", "DOCS", "한글", "😀", "👩‍💻", "e\u0301"])(
+		"forwards %j once through the mounted pane's text route",
+		async (text) => {
+			const { view } = await bootTerminalWithFrame();
+			const input = terminalInput(view);
+			input.focus();
+			mocks.send.mockClear();
+			const down = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				key: text,
+				code: "KeyA",
+				shiftKey: true,
+			});
+			fireEvent(input, down);
+			expect(down.defaultPrevented).toBe(false);
+			expect(sentInputIntents("key")).toHaveLength(0);
+			expect(sentTextPayloads()).toEqual([]);
+			// jsdom does not perform the browser's default text insertion.
+			fireEvent.input(input, {
+				target: { value: text },
+				data: text,
+				inputType: "insertText",
+			});
+			expect(sentTextPayloads()).toEqual([text]);
+			expect(sentInputIntents("key")).toHaveLength(0);
+			expect(input.value).toBe("");
+		},
+	);
+});
+
 describe("saved Quick Command pane input", () => {
 	it("uses the mounted pane paste path and waits for its receipt before Enter", async () => {
 		const { onRecords } = await bootTerminalWithFrame();

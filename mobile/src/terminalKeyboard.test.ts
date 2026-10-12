@@ -33,6 +33,50 @@ function insert(field: HTMLTextAreaElement, text: string) {
 }
 
 describe("native terminal keyboard context", () => {
+	it.each(["docs", "DOCS", "한글", "😀", "👩‍💻", "e\u0301"])(
+		"leaves %j in the native text context and forwards it once",
+		(text) => {
+			const { field, actions, input } = keyboard();
+			const down = new KeyboardEvent("keydown", {
+				key: text,
+				code: "KeyA",
+				cancelable: true,
+			});
+			field.dispatchEvent(down);
+			expect(down.defaultPrevented).toBe(false);
+			expect(actions.key).not.toHaveBeenCalled();
+			expect(actions.text).not.toHaveBeenCalled();
+			insert(field, text);
+			input.finish();
+			expect(actions.text.mock.calls).toEqual([[text]]);
+			expect(actions.key).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps a dead-key accent in the native composition until commit", () => {
+		const { field, actions } = keyboard();
+		const down = new KeyboardEvent("keydown", {
+			key: "Dead",
+			code: "Quote",
+			altKey: true,
+			cancelable: true,
+		});
+		field.dispatchEvent(down);
+		expect(down.defaultPrevented).toBe(false);
+		field.dispatchEvent(new CompositionEvent("compositionstart"));
+		insert(field, "é");
+		expect(actions.text).not.toHaveBeenCalled();
+		field.dispatchEvent(new CompositionEvent("compositionend", { data: "é" }));
+		field.dispatchEvent(
+			new InputEvent("input", {
+				inputType: "insertFromComposition",
+				data: "é",
+			}),
+		);
+		expect(actions.text.mock.calls).toEqual([["é"]]);
+		expect(actions.key).not.toHaveBeenCalled();
+	});
+
 	it("ignores iOS unidentified keydowns and sends committed composition once", () => {
 		const { field, actions } = keyboard();
 		field.dispatchEvent(

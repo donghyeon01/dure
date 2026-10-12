@@ -92,6 +92,98 @@ describe("structured terminal input intents", () => {
 		expect(shouldSendTerminalKey(event("Enter", false, true))).toBe(false);
 	});
 
+	it.each([
+		"docs",
+		"DOCS",
+		"two words",
+		"한글",
+		"😀",
+		"👩‍💻",
+		"e\u0301",
+		"\u200c",
+	])(
+		"leaves printable key payload %j to the text event despite a physical KeyA code",
+		(key) => {
+			expect(
+				shouldSendTerminalKey({
+					key,
+					code: "KeyA",
+					shiftKey: true,
+					altKey: false,
+					ctrlKey: false,
+					metaKey: false,
+					repeat: true,
+					getModifierState: () => false,
+				}),
+			).toBe(false);
+		},
+	);
+
+	it.each([
+		"Enter",
+		"Tab",
+		"ArrowLeft",
+		"Backspace",
+		"Delete",
+		"F24",
+		"Soft5",
+		"Shift",
+		"AltGraph",
+		"Unidentified",
+		"AudioVolumeMute",
+		"BrowserBack",
+		"TVInputHDMI1",
+		"LaunchApplication2",
+		"Escape",
+		"Esc",
+		"",
+		"a\n",
+		"\u007f",
+		"\ud800",
+	])(
+		"keeps named or non-text key %j out of the printable text classification",
+		(key) => {
+			expect(
+				shouldSendTerminalKey({
+					key,
+					code: "",
+					shiftKey: false,
+					altKey: false,
+					ctrlKey: false,
+					metaKey: false,
+					repeat: false,
+					getModifierState: () => false,
+				}),
+			).toBe(true);
+		},
+	);
+
+	it.each([
+		{ key: "docs", ctrlKey: true, expected: true },
+		{ key: "docs", altKey: true, expected: true },
+		{ key: "docs", metaKey: true, expected: false },
+		{ key: "docs", metaKey: true, ctrlKey: true, expected: true },
+		{ key: "docs", isComposing: true, ctrlKey: true, expected: false },
+		{ key: "Process", expected: false },
+		{ key: "Dead", altKey: true, expected: false },
+	])(
+		"preserves shortcut/composition routing for %j",
+		({ expected, ...event }) => {
+			expect(
+				shouldSendTerminalKey({
+					code: "KeyA",
+					shiftKey: false,
+					altKey: false,
+					ctrlKey: false,
+					metaKey: false,
+					repeat: false,
+					getModifierState: () => false,
+					...event,
+				}),
+			).toBe(expected);
+		},
+	);
+
 	it("orders resize by its connection record instead of terminal output", () => {
 		const decoded = decodeTerminalStateRecord(
 			encodeTerminalResizeIntent(
