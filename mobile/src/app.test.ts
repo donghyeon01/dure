@@ -2341,6 +2341,49 @@ describe("commit message input", () => {
     field.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
   };
 
+  it("follows keyboard resize and pan events without replacing the composing commit field", async () => {
+    const previous = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    const viewport = Object.assign(new EventTarget(), {
+      height: window.innerHeight, offsetTop: 0, scale: 1,
+    });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    try {
+      const root = await openCommit();
+      const sheet = root.querySelector(".sheet");
+      const field = messageField(root);
+      field.focus();
+      field.dispatchEvent(new CompositionEvent("compositionstart"));
+      field.value = "한";
+      field.dispatchEvent(new InputEvent("input", { bubbles: true, data: "한", isComposing: true }));
+      for (const [height, top, event] of [
+        [430, 0, "resize"], [430, 38, "scroll"], [390, 24, "resize"], [390, 0, "scroll"],
+      ] as const) {
+        viewport.height = height;
+        viewport.offsetTop = top;
+        viewport.dispatchEvent(new Event(event));
+        expect(document.documentElement.style.getPropertyValue("--app-viewport-height")).toBe(`${height}px`);
+        expect(document.documentElement.style.getPropertyValue("--app-viewport-top")).toBe(`${top}px`);
+        expect(root.querySelector(".sheet")).toBe(sheet);
+        expect(messageField(root)).toBe(field);
+        expect(document.activeElement).toBe(field);
+        expect(field.value).toBe("한");
+      }
+      field.dispatchEvent(new CompositionEvent("compositionend", { data: "한" }));
+      type(field, "한글 commit");
+      pick(root, ".sheet .pair-button--solid").click();
+      expect(writes()).toHaveLength(1);
+      expect(writes()[0]?.args.action).toMatchObject({ message: "한글 commit" });
+      finishScmWrite?.();
+      await settle();
+      expect(root.querySelector(".sheet")).toBeNull();
+    } finally {
+      disposeApp?.();
+      disposeApp = undefined;
+      if (previous) Object.defineProperty(window, "visualViewport", previous);
+      else clearViewport();
+    }
+  });
+
   it("keeps the focused field through typing and submits the complete current draft", async () => {
     const root = await openCommit();
     const field = messageField(root);

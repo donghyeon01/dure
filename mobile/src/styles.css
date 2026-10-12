@@ -193,6 +193,13 @@ body {
     transform: translateZ(0);
   }
 
+  .workspace__detail .sheet {
+    /* This column already follows the visual viewport. Do not apply its
+       offset again inside the transformed containing block. */
+    inset: 0;
+    height: 100%;
+  }
+
   .workspace__detail > .session {
     position: absolute;
     inset: 0;
@@ -1031,7 +1038,10 @@ body {
 /* 아래에서 올라오는 시트. 붙여넣기 입력이 여기 들어간다. */
 .sheet {
   position: fixed;
-  inset: 0;
+  /* Share the app's viewport publisher: iOS can resize and pan the visible
+     area while composing without shrinking the layout viewport. */
+  inset: var(--app-viewport-top, 0px) 0 auto;
+  height: var(--app-viewport-height, 100dvh);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -1040,6 +1050,9 @@ body {
 }
 
 .sheet__panel {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
   border-radius: 18px 18px 0 0;
   border-top: 1px solid var(--border);
   background: var(--card);
