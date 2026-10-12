@@ -72,6 +72,7 @@ export function AgentProjectMove({
 				setPlan(undefined);
 				setAttempted(false);
 				setPrepared(undefined);
+				setRepairAvailable(false);
 			}
 		} finally {
 			setBusy(false);

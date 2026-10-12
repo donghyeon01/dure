@@ -168,3 +168,35 @@ it("refreshes a locally stale preparation without closing the dialog", async () 
 	await screen.findByText("/new");
 	expect(f.apply).not.toHaveBeenCalled();
 });
+
+it("keeps Retry usable after a local repair refusal", async () => {
+	f.prepare.mockResolvedValue({
+		projects: [],
+		complete: true,
+		recoveredPlan: plan,
+		recoveredStatus: "repair_required",
+		preview: f.preview,
+		apply: f.apply,
+		status: f.status,
+		repair: f.repair,
+	});
+	f.repair.mockRejectedValueOnce(
+		Object.assign(new Error("client_project_move_pending_input"), {
+			code: "client_project_move_pending_input",
+			submitted: false,
+		}),
+	);
+	render(<AgentProjectMove agentId="agent-1" />);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.title") }),
+	);
+	fireEvent.click(
+		await screen.findByRole("button", { name: t("agents.projectMove.repair") }),
+	);
+	const retry = await screen.findByRole("button", { name: t("common.retry") });
+	expect((retry as HTMLButtonElement).disabled).toBe(false);
+	fireEvent.click(retry);
+	await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(2));
+	expect(f.apply).not.toHaveBeenCalled();
+	expect(f.preview).not.toHaveBeenCalled();
+});
