@@ -1,0 +1,51 @@
+/* The session info sheet (`sessionInfoView.ts`). The tray sheet's panel, with
+ * label/value lines like the settings rows: label above, value under it, so a
+ * long session id or folder wraps inside the line instead of off the screen. */
+
+.session-info__facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.session-info__fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--row-line);
+}
+
+.session-info__fact:last-child {
+  border-bottom: 0;
+}
+
+.session-info__label {
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.session-info__value {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  /* The fallback when the clipboard refuses: press and hold to select. */
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.session-info__value--code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.session-info__fact--error .session-info__value {
+  color: var(--destructive);
+}

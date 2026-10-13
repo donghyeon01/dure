@@ -5523,7 +5523,7 @@ describe("세션 화면의 데스크탑 묶음", () => {
       ),
     );
     await settle();
-    expect(labels()).toEqual([t("세션 열기")]);
+    expect(labels()).toEqual([t("세션 열기"), t("sessionInfo.action")]);
 
     root.querySelector<HTMLElement>(".row-menu")?.click();
     await settle();
@@ -5537,6 +5537,101 @@ describe("세션 화면의 데스크탑 묶음", () => {
     );
     await settle();
     expect(labels()).toEqual([]);
+  });
+
+  /** #227: two rows can share a title; the sheet names the session the way the computer does. */
+  it("opens a session info sheet from the row menu and copies it", async () => {
+    pairedLaptop();
+    hubLayouts[HUB_ID].placements["hub-live"] = {
+      desktop: WORKSPACE, project: "agent-ide", order: 0, branch: "feat/mobile",
+    };
+    hubCatalogSessions = [{
+      ...remoteSession(),
+      session_id: "hub-live",
+      session_name: "배선",
+      hmux_session_name: "claude-2",
+      workspace_id: "agent-ide",
+      provider_id: "claude-code",
+      launch_program: null,
+      box_id: "this-laptop",
+      box_label: "맥북",
+      presentation: { kind: "agent", projectName: "agent-ide", cwd: "/Users/me/agent-ide" },
+    }];
+    const root = await openAllSessions();
+
+    await holdRow(
+      [...root.querySelectorAll<HTMLButtonElement>(".list__open")].find((node) =>
+        node.textContent?.includes("배선"),
+      ),
+    );
+    await settle();
+    const info = [...root.querySelectorAll<HTMLButtonElement>(".row-menu__item")]
+      .find((item) => item.textContent === t("sessionInfo.action"));
+    info?.click();
+    await settle();
+
+    expect(root.querySelector(".row-menu")).toBeNull();
+    const sheet = root.querySelector<HTMLElement>(".session-info");
+    expect(sheet?.querySelector(".sheet__title")?.textContent).toBe("배선");
+    const fact = (id: string) => sheet?.querySelector(`[data-fact="${id}"] dd`)?.textContent;
+    expect(fact("name")).toBe("claude-2");
+    expect(fact("space")).toBe(WORKSPACE);
+    expect(fact("project")).toBe("agent-ide");
+    expect(fact("branch")).toBe("feat/mobile");
+    expect(fact("folder")).toBe("/Users/me/agent-ide");
+    expect(fact("computer")).toBe("맥북");
+    expect(fact("session")).toBe("hub-live");
+
+    // A census passing under the sheet does not take it away.
+    await pullDown(root);
+    expect(root.querySelector(".session-info")).not.toBeNull();
+
+    pick(root, ".session-info__copy").click();
+    await settle();
+    const copied = copiedTexts[copiedTexts.length - 1];
+    expect(copied).toContain("claude-2");
+    expect(copied).toContain("hub-live");
+    expect(pick(root, ".session-info__copy").textContent).toBe(t("복사됨"));
+
+    root.querySelector<HTMLElement>(".session-info")?.click();
+    await settle();
+    expect(root.querySelector(".session-info")).toBeNull();
+  });
+
+  it("shows why the last attach was refused until a controlling attach succeeds", async () => {
+    pairedLaptop();
+    refuseWritableAttach = true;
+    const root = await openAllSessions();
+    const liveRow = () =>
+      [...root.querySelectorAll<HTMLButtonElement>(".list__open")].find((node) =>
+        node.textContent?.includes("배선"),
+      );
+    const lastError = async (): Promise<string | null | undefined> => {
+      await holdRow(liveRow());
+      await settle();
+      [...root.querySelectorAll<HTMLButtonElement>(".row-menu__item")]
+        .find((item) => item.textContent === t("sessionInfo.action"))?.click();
+      await settle();
+      const value = root.querySelector('.session-info [data-fact="lastError"] dd')?.textContent;
+      root.querySelector<HTMLElement>(".session-info")?.click();
+      await settle();
+      return value;
+    };
+    const leaveTerminal = async (): Promise<void> => {
+      pick(root, ".session__header .icon-tap").click();
+      await settle();
+    };
+
+    liveRow()?.click();
+    await settle();
+    await leaveTerminal();
+    expect(await lastError()).toContain("Another client controls this Hmux session");
+
+    refuseWritableAttach = false;
+    liveRow()?.click();
+    await settle();
+    await leaveTerminal();
+    expect(await lastError()).toBeUndefined();
   });
 
   it("opens a formerly offline session after a successful refresh", async () => {

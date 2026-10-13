@@ -2484,6 +2484,7 @@ fn describe(
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
+                hmux_session_name: entry.session_name.clone(),
             })
             .collect(),
         // 사용자가 앱에서 만든 묶음 전체. 현재 카탈로그에 없는 세션의 자리도
@@ -2596,6 +2597,10 @@ pub struct HubProbeSession {
     pub ready: bool,
     pub box_id: String,
     pub box_label: String,
+    /// 세션의 hmux 이름. `session.session_name` 은 노트북 사이드바 제목이 있으면
+    /// 그것으로 바뀌므로, 컴퓨터의 CLI 가 부르는 이름은 여기에만 남는다. 세션 정보
+    /// 시트가 같은 제목의 두 줄을 가르는 데 쓴다(#227).
+    pub hmux_session_name: Option<String>,
 }
 
 struct PairFromScanAttempt {

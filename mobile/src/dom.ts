@@ -8,7 +8,7 @@
 
 import { t } from "./i18n";
 import { DURE_LOADER_DOT_COUNT, dureLoaderGeometry } from "@/lib/ui/dureLoader";
-import type { AgentKind, RunState } from "./sessionRows";
+import { type AgentKind, RUN_STATE_LABEL, type RunState } from "./sessionRows";
 
 export function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -50,7 +50,7 @@ export function glyph(source: string, size: number, className?: string): HTMLEle
 export function statusDot(state: RunState): HTMLElement {
   const dot = element("span", `dot dot--${state}`);
   dot.setAttribute("role", "img");
-  dot.setAttribute("aria-label", t(STATE_LABEL[state]));
+  dot.setAttribute("aria-label", t(RUN_STATE_LABEL[state]));
   return dot;
 }
 
@@ -103,14 +103,6 @@ export function paintedBackground(host: HTMLElement): string | undefined {
   if (!painted || painted === "transparent" || painted === "rgba(0, 0, 0, 0)") return undefined;
   return painted;
 }
-
-const STATE_LABEL: Record<RunState, string> = {
-  run: "session.status.running",
-  warn: "session.status.attention",
-  blocked: "session.status.blocked",
-  done: "common.exited",
-  unknown: "session.status.unknown",
-};
 
 /**
  * 제공자 뱃지.

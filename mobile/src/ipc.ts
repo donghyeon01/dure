@@ -434,6 +434,13 @@ export interface HubLayout {
 
 export interface HubProbeSession extends RemoteSession {
   presentation?: SessionPresentation | null;
+  /**
+   * The session's own hmux name. `session_name` carries the laptop's sidebar
+   * title when it sent one, so this is the only place the name the computer's
+   * CLI uses survives. Missing from phones' older Rust halves and from catalogs
+   * that named nothing.
+   */
+  hmux_session_name?: string | null;
   /** Rust가 계산해 붙인다. 화면이 `lifecycle`을 다시 해석하지 않는다. */
   ready: boolean;
   box_id: string;

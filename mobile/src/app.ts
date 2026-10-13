@@ -116,7 +116,16 @@ import { attachPullToRefresh } from "./pullToRefresh";
 import { renderAddSheet } from "./addSheetView";
 import iconArrowUpRight from "./assets/icon-arrow-up-right.svg";
 import iconRefreshCw from "./assets/icon-refresh-cw.svg";
+import iconInfo from "./assets/icon-info.svg";
 import { type RowMenuItem, renderSessionRowMenu } from "./sessionRowMenu";
+import {
+  type AttachFailures,
+  sessionInfoFacts,
+  sessionInfoText,
+  withAttachFailure,
+  withoutAttachFailure,
+} from "./sessionInfo";
+import { renderSessionInfoSheet } from "./sessionInfoView";
 import type { MenuAnchor } from "./sessionRowMenuPlacement";
 import { glyph } from "./dom";
 import iconPlusLarge from "./assets/icon-plus-lg.svg";
@@ -172,6 +181,13 @@ type ScmSheet =
 interface RowMenu {
   readonly sessionId: string;
   readonly anchor: MenuAnchor;
+}
+
+/** The info sheet a row menu opened. See `State.rowInfo`. */
+interface RowInfo {
+  readonly sessionId: string;
+  /** The copy button has put the lines on the clipboard. */
+  readonly copied?: true;
 }
 
 type Screen =
@@ -475,6 +491,22 @@ interface State {
    */
   rowMenu?: RowMenu;
   /**
+   * The info sheet over one session row, opened from its menu (#227).
+   *
+   * A session id for the same reason as `rowMenu`: the sheet is drawn from the
+   * current listing on every render, so its lines follow the census, and a row
+   * that left the listing takes its sheet with it.
+   */
+  rowInfo?: RowInfo;
+  /**
+   * The last refused attach per session, as this phone saw it.
+   *
+   * In memory only. It is what the info sheet's last error line reads, and a
+   * reason kept across launches would describe an attempt nobody remembers
+   * making.
+   */
+  attachFailures: AttachFailures;
+  /**
    * The selected desktop tab. Presentation state, so it lives here and not in
    * the hub protocol.
    */
@@ -654,6 +686,7 @@ export function startApp(root: HTMLElement): () => void {
     panel: "none",
     tray: keyTray.load(),
     addSheet: false,
+    attachFailures: {},
   };
   let surface: StructuredTerminalSurface | undefined;
   const pushSync = createPushSync({
@@ -902,7 +935,8 @@ export function startApp(root: HTMLElement): () => void {
 
   const homeVisible = () => (state.screen.kind === "home" || state.screen.kind === "sessions" ||
     Boolean(view.querySelector(".workspace__list")?.getClientRects().length)) && !state.addSheet &&
-    !state.rowMenu && !state.homeMenu && !state.opening && document.visibilityState !== "hidden";
+    !state.rowMenu && !state.rowInfo && !state.homeMenu && !state.opening &&
+    document.visibilityState !== "hidden";
   const sessionCensus = createSessionCensus({
     root,
     current: () => state,
@@ -1322,6 +1356,10 @@ export function startApp(root: HTMLElement): () => void {
       if (state.rowMenu) {
         const menu = rowMenu(state.rowMenu);
         if (menu) view.append(menu);
+      }
+      if (state.rowInfo) {
+        const sheet = rowInfoSheet(state.rowInfo);
+        if (sheet) view.append(sheet);
       }
     }
     if (state.homeMenu) nativeBack.bind(() => setState({ homeMenu: state.homeMenu === "root" ? undefined : "root" }));
@@ -1915,6 +1953,16 @@ export function startApp(root: HTMLElement): () => void {
         },
       });
     }
+    // Offered whatever the row's state: a session that will not open is the
+    // one somebody most needs to identify (#227).
+    items.push({
+      id: "info",
+      label: t("sessionInfo.action"),
+      icon: iconInfo,
+      // One render that swaps the menu for the sheet, so nothing paints the
+      // list bare in between.
+      run: () => setState({ rowMenu: undefined, rowInfo: { sessionId: row.sessionId } }),
+    });
     return renderSessionRowMenu(
       {
         anchor: open.anchor,
@@ -1924,6 +1972,52 @@ export function startApp(root: HTMLElement): () => void {
       },
       { dismiss: close },
     );
+  }
+
+  /**
+   * The info sheet a row menu opened (#227). Looked up again on every render
+   * like the menu, so it describes the row as the latest census reports it and
+   * closes once the row is gone.
+   */
+  function rowInfoSheet(open: RowInfo): HTMLElement | undefined {
+    const row = listedRows().find((candidate) => candidate.sessionId === open.sessionId);
+    if (!row) {
+      queueMicrotask(() => setState({ rowInfo: undefined }));
+      return undefined;
+    }
+    const facts = sessionInfoFacts({
+      row,
+      hubs: Object.values(state.hubSessions),
+      seat: mergeLayouts(state.hubLayouts).placements[row.sessionId],
+      failure: state.attachFailures[row.sessionId],
+      now: Date.now(),
+    });
+    const close = nativeBack.bind(() => setState({ rowInfo: undefined }));
+    return renderSessionInfoSheet(
+      { title: row.title, facts, copied: open.copied === true },
+      {
+        dismiss: close,
+        copy: () => void copySessionInfo(row.sessionId, sessionInfoText(row.title, facts)),
+      },
+    );
+  }
+
+  async function copySessionInfo(sessionId: string, text: string): Promise<void> {
+    try {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+      if (state.rowInfo?.sessionId !== sessionId) return;
+      setState({ rowInfo: { sessionId, copied: true }, banner: undefined });
+    } catch {
+      // The values on the sheet are selectable; that is the copy that always works.
+      setState({ banner: t("복사하지 못했습니다 — 길게 눌러 선택하세요") });
+    }
+  }
+
+  /** Remember why this session's attach was refused, for its info sheet. */
+  function noteAttachFailure(sessionId: string, detail: string | undefined): void {
+    if (detail === undefined || detail.trim() === "") return;
+    writeState({ attachFailures: withAttachFailure(state.attachFailures, sessionId, detail, Date.now()) });
   }
 
   /** Where 추가's two rows lead. The sheet itself is `addSheetView.ts`. */
@@ -2299,6 +2393,8 @@ export function startApp(root: HTMLElement): () => void {
         banner: undefined,
         recents: visited,
         terminalUnavailable: undefined,
+        // A watch-only attach leaves the refusal that made it one in place.
+        ...(writable ? { attachFailures: withoutAttachFailure(state.attachFailures, session.session_id) } : {}),
         screen: {
           kind: "terminal",
           source,
@@ -2313,6 +2409,7 @@ export function startApp(root: HTMLElement): () => void {
       if (!isCurrent() || (isCommandError(error) && error.code === "terminal_attach_superseded")) {
         return undefined;
       }
+      noteAttachFailure(session.session_id, describeError(error));
       setState({ screen: returnTo, banner: describeError(error) });
       return false;
     }
@@ -2361,8 +2458,10 @@ export function startApp(root: HTMLElement): () => void {
             : await ipc.resolveHubSessionSuccessor(source.id, source.boxId, session);
           if (!isCurrent()) return;
           if (resolution.state !== "resolved") {
-            setState({ banner: resolution.state === "pending"
-              ? t("terminal.reconnect.rehostPending") : t("이 세션에 닿을 수 있는 경로가 없습니다") });
+            const banner = resolution.state === "pending"
+              ? t("terminal.reconnect.rehostPending") : t("이 세션에 닿을 수 있는 경로가 없습니다");
+            noteAttachFailure(session.session_id, banner);
+            setState({ banner });
             return;
           }
           current = resolution.session;
@@ -2385,8 +2484,12 @@ export function startApp(root: HTMLElement): () => void {
         watchingBecause(refusal),
       );
     } catch (error) {
-      if (isCurrent()) setState({ banner: isCommandError(error) && error.code === "hmux_protocol_version_unsupported"
-        ? t("terminal.reconnect.updateRequired") : describeError(error) });
+      if (isCurrent()) {
+        const banner = isCommandError(error) && error.code === "hmux_protocol_version_unsupported"
+          ? t("terminal.reconnect.updateRequired") : describeError(error);
+        noteAttachFailure(session.session_id, banner);
+        setState({ banner });
+      }
     } finally {
       // The attempt owns this marker even when rehost changes its runtime ID.
       // A late attempt must not clear a newer selection's loading state.

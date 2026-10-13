@@ -42,6 +42,15 @@ export function lifecycleState(lifecycle: string): RunState {
   return LIFECYCLE_STATE[lifecycle.trim().toLowerCase()] ?? "unknown";
 }
 
+/** The words for each display state, as translation keys. The dot and the info sheet both read it. */
+export const RUN_STATE_LABEL: Readonly<Record<RunState, string>> = {
+  run: "session.status.running",
+  warn: "session.status.attention",
+  blocked: "session.status.blocked",
+  done: "common.exited",
+  unknown: "session.status.unknown",
+};
+
 export function runState(session: RemoteSession): RunState {
   return lifecycleState(session.lifecycle);
 }
