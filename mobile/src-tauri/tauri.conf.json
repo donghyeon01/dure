@@ -14,7 +14,8 @@
       {
         "title": "Dure",
         "width": 420,
-        "height": 900
+        "height": 900,
+        "backgroundColor": "#0a0a0a"
       }
     ],
     "security": {
@@ -32,7 +33,7 @@
       "icons/icon.ico"
     ],
     "iOS": {
-      "bundleVersion": "3",
+      "bundleVersion": "4",
       "developmentTeam": "8L5WFHS4F9",
       "minimumSystemVersion": "15.0"
     }
