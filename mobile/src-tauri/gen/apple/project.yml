@@ -46,6 +46,11 @@ targets:
         # 승인 직전에 기기 소유자인지 확인하는 것이 유일한 이유다.
         NSFaceIDUsageDescription: "승인 전에 기기 소유자인지 확인할 때만 씁니다. / Used only to confirm it is you before an approval."
         LSRequiresIPhoneOS: true
+        # iOS 27 SDK 로 빌드한 앱은 scene 생명주기가 없으면 iOS 27 에서 아예
+        # 뜨지 않는다(#230). tao 0.37 은 이 항목이 있으면 scene 으로 돌고,
+        # 창은 한 장뿐이라 여러 scene 은 켜지 않는다.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:

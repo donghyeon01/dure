@@ -32,7 +32,7 @@
       "icons/icon.ico"
     ],
     "iOS": {
-      "bundleVersion": "2",
+      "bundleVersion": "3",
       "developmentTeam": "8L5WFHS4F9",
       "minimumSystemVersion": "15.0"
     }

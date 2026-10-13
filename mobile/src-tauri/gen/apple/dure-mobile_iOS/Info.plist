@@ -19,13 +19,18 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.4</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>3</string>
 	<key>NSCameraUsageDescription</key>
 	<string>페어링 QR 코드를 읽을 때만 카메라를 씁니다. / Used only to read the pairing QR code.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>승인 전에 기기 소유자인지 확인할 때만 씁니다. / Used only to confirm it is you before an approval.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
