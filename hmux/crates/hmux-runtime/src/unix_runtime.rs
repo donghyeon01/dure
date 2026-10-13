@@ -165,8 +165,8 @@ use idle_retirement::{IdleRetirementDecision, IdleRetirementInput, evaluate_idle
 use managed_authorization::ManagedAuthorizationGrants;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use presentation_checkpoint_writer::{
-    CheckpointFailureCode, CheckpointVersion, FinalFlushOutcome, PresentationCheckpointWriter,
-    PresentationSnapshotSource, RootRetired, SessionCheckpointSink,
+    CheckpointFailureCode, CheckpointSinkError, CheckpointVersion, FinalFlushOutcome,
+    PresentationCheckpointWriter, PresentationSnapshotSource, RootRetired, SessionCheckpointSink,
 };
 use process_session::OwnedProcessSession;
 use pty_input::{InputAdmission, PtyInput, apply_pty_input};
@@ -3030,12 +3030,17 @@ impl PresentationSnapshotSource for ServerCheckpointSource {
         })
     }
 
-    fn current_checkpoint(&self) -> Option<TerminalCheckpoint> {
-        self.state
-            .host
-            .lock()
-            .ok()
-            .and_then(|mut host| host.current_checkpoint().ok())
+    fn current_checkpoint(
+        &self,
+    ) -> std::result::Result<Option<TerminalCheckpoint>, CheckpointSinkError> {
+        let Ok(mut host) = self.state.host.lock() else {
+            return Ok(None);
+        };
+        match host.current_checkpoint() {
+            Ok(checkpoint) => Ok(Some(checkpoint)),
+            Err(SessionHostError::TerminalReplay(_)) => Err(CheckpointSinkError::snapshot()),
+            Err(_) => Ok(None),
+        }
     }
 }
 

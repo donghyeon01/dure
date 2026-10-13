@@ -24,6 +24,14 @@ const PANIC_RECORD_RETRY: std::time::Duration = std::time::Duration::from_millis
 const MAX_FILE_BYTES: u64 = 256 * 1024;
 const ROTATED_FILES: usize = 3;
 
+#[cfg(test)]
+pub(crate) fn runtime_file(discovery_root: &Path) -> PathBuf {
+    discovery_root
+        .join(DIAGNOSTICS_DIRECTORY)
+        .join(RUNTIME_DIRECTORY)
+        .join(RUNTIME_FILE)
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeDiagnostics {
     inner: Option<Arc<RuntimeDiagnosticsInner>>,

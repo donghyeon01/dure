@@ -1481,6 +1481,132 @@ mod tests {
         assert_eq!(row_text(frame, 0), format!("x{}", "가".repeat(12)));
     }
 
+    /// Deterministic xorshift64, so a failing seed reproduces exactly.
+    struct SequenceRng(u64);
+
+    impl SequenceRng {
+        fn new(seed: u64) -> Self {
+            Self(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+        }
+
+        fn below(&mut self, bound: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % bound
+        }
+
+        fn between(&mut self, low: u16, high: u16) -> u16 {
+            low + u16::try_from(self.below(u64::from(high - low) + 1)).unwrap()
+        }
+    }
+
+    enum TerminalStep {
+        Output(Vec<u8>),
+        Resize { rows: u16, columns: u16 },
+    }
+
+    /// Steps that push wide cells against the grid edges: wide and combining
+    /// text, cursor motion, edits, scroll regions, left/right margins,
+    /// autowrap, the alternate screen and geometry changes.
+    fn random_terminal_step(rng: &mut SequenceRng, rows: u16, columns: u16) -> TerminalStep {
+        let output = match rng.below(24) {
+            0..=4 => (0..rng.between(1, 12))
+                .map(|_| {
+                    char::from_u32(0xAC00 + u32::try_from(rng.below(11_172)).unwrap()).unwrap()
+                })
+                .collect::<String>(),
+            5 | 6 => (0..rng.between(1, 12))
+                .map(|_| char::from(b'a' + u8::try_from(rng.below(26)).unwrap()))
+                .collect(),
+            7 => [
+                "\u{1F600}",
+                "\u{4E2D}",
+                "\u{FF21}",
+                "\u{2764}\u{FE0F}",
+                "\u{23FA}",
+                "e\u{301}",
+                "\u{1100}\u{1161}",
+            ][usize::try_from(rng.below(7)).unwrap()]
+            .to_string(),
+            8..=10 => format!("\x1b[{};{}H", rng.between(1, rows), rng.between(1, columns)),
+            11 => format!("\x1b[{}K", rng.below(3)),
+            12 => format!("\x1b[{}J", rng.below(3)),
+            13 => format!(
+                "\x1b[{}{}",
+                rng.between(1, 6),
+                ["@", "P", "X"][usize::try_from(rng.below(3)).unwrap()]
+            ),
+            14 => format!(
+                "\x1b[{}{}",
+                rng.between(1, 3),
+                ["L", "M", "S", "T"][usize::try_from(rng.below(4)).unwrap()]
+            ),
+            15 => {
+                let top = rng.between(1, rows);
+                format!("\x1b[{top};{}r", rng.between(top, rows))
+            }
+            16 => {
+                let left = rng.between(1, columns);
+                format!("\x1b[?69h\x1b[{left};{}s", rng.between(left, columns))
+            }
+            17 => "\x1b[?69l".to_string(),
+            18 => ["\x1b[?7l", "\x1b[?7h"][usize::try_from(rng.below(2)).unwrap()].to_string(),
+            19 => {
+                ["\x1b[?1049h", "\x1b[?1049l"][usize::try_from(rng.below(2)).unwrap()].to_string()
+            }
+            20 => ["\r\n", "\x08", "\t", "\x1b[3C", "\x1b[2D"]
+                [usize::try_from(rng.below(5)).unwrap()]
+            .to_string(),
+            _ => {
+                return TerminalStep::Resize {
+                    rows: (rows + rng.between(0, 4)).saturating_sub(2).clamp(3, 12),
+                    columns: (columns + rng.between(0, 8)).saturating_sub(4).clamp(4, 40),
+                };
+            }
+        };
+        TerminalStep::Output(output.into_bytes())
+    }
+
+    /// Any state output and resizes can reach must project to a record the
+    /// protocol accepts; one invalid row otherwise refuses every new attach.
+    #[test]
+    fn randomized_output_and_resizes_always_project_protocol_valid_viewports() {
+        const SEEDS: u64 = 300;
+        const STEPS: usize = 120;
+        for seed in 1..=SEEDS {
+            let mut rng = SequenceRng::new(seed);
+            let (mut rows, mut columns) = (rng.between(3, 8), rng.between(4, 16));
+            let mut replay = replay();
+            replay.resize(rows, columns).unwrap();
+            for step in 0..STEPS {
+                match random_terminal_step(&mut rng, rows, columns) {
+                    TerminalStep::Output(bytes) => {
+                        replay.ingest_output(&bytes).unwrap();
+                    }
+                    TerminalStep::Resize {
+                        rows: next_rows,
+                        columns: next_columns,
+                    } => {
+                        (rows, columns) = (next_rows, next_columns);
+                        replay.resize(rows, columns).unwrap();
+                    }
+                }
+                if rng.below(4) != 0 {
+                    continue;
+                }
+                let mut projection = replay.attach_view_projection().unwrap();
+                let record = replay
+                    .take_latest_viewport_frame(&mut projection)
+                    .unwrap_or_else(|error| panic!("seed {seed} step {step}: {error}"))
+                    .expect("a fresh projection yields one complete frame");
+                terminal_state_protocol::validate_record(&record)
+                    .unwrap_or_else(|error| panic!("seed {seed} step {step}: {error}"));
+                replay.detach_view_projection(&mut projection).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn scrolling_past_tail_reuses_the_complete_captured_viewport() {
         for downward_rows in [1, 2, 64] {

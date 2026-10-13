@@ -22,7 +22,13 @@ const DIAGNOSTIC_DEGRADATION_MIN_INTERVAL: Duration = Duration::from_secs(30);
 
 pub(crate) trait PresentationSnapshotSource: Send + Sync + 'static {
     fn current_version(&self) -> Option<CheckpointVersion>;
-    fn current_checkpoint(&self) -> Option<TerminalCheckpoint>;
+    /// `Ok(None)` means there is nothing to capture right now (no running
+    /// provider epoch). An `Err` means the terminal state exists but could not
+    /// be encoded; the writer reports it instead of keeping an ever older
+    /// checkpoint without a trace.
+    fn current_checkpoint(
+        &self,
+    ) -> std::result::Result<Option<TerminalCheckpoint>, CheckpointSinkError>;
 }
 
 pub(crate) trait PresentationCheckpointSink: Send + 'static {
@@ -92,6 +98,7 @@ impl CheckpointFailureCode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckpointFailurePhase {
+    Snapshot,
     Capture,
     Write,
     FileSync,
@@ -107,6 +114,7 @@ pub(crate) enum CheckpointFailurePhase {
 impl CheckpointFailurePhase {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Snapshot => "snapshot",
             Self::Capture => "capture",
             Self::Write => "write",
             Self::FileSync => "file_sync",
@@ -128,6 +136,14 @@ pub(crate) struct CheckpointSinkError {
 }
 
 impl CheckpointSinkError {
+    /// The terminal engine refused to encode its current state.
+    pub(crate) fn snapshot() -> Self {
+        Self {
+            code: CheckpointFailureCode::InvalidCheckpoint,
+            phase: CheckpointFailurePhase::Snapshot,
+        }
+    }
+
     fn capture(error: DiscoveryError) -> Self {
         Self {
             code: classify_discovery_error(&error),
@@ -443,9 +459,28 @@ fn run_writer(
                 wait = config.periodic_interval;
                 continue;
             }
-            let Some(checkpoint) = source.current_checkpoint() else {
-                wait = config.periodic_interval;
-                continue;
+            let checkpoint = match source.current_checkpoint() {
+                Ok(Some(checkpoint)) => checkpoint,
+                Ok(None) => {
+                    wait = config.periodic_interval;
+                    continue;
+                }
+                Err(error) => {
+                    failure_streak = failure_streak.saturating_add(1);
+                    wait = retry_backoff(config, failure_streak);
+                    if !degraded {
+                        if let Some(version) = source.current_version() {
+                            degraded_diagnostic_visible = record_degraded(
+                                diagnostics,
+                                version,
+                                error,
+                                &mut last_degraded_diagnostic,
+                            );
+                            degraded = true;
+                        }
+                    }
+                    continue;
+                }
             };
             let version = CheckpointVersion::from(&checkpoint);
             let next_wait = periodic_wait_for_repaint(config, checkpoint.payload.len());
@@ -718,6 +753,7 @@ mod tests {
 
     struct SharedSourceState {
         checkpoint: Option<TerminalCheckpoint>,
+        capture_fails: bool,
         reads: usize,
         version_reads: usize,
     }
@@ -728,6 +764,7 @@ mod tests {
                 shared: Arc::new((
                     Mutex::new(SharedSourceState {
                         checkpoint,
+                        capture_fails: false,
                         reads: 0,
                         version_reads: 0,
                     }),
@@ -740,6 +777,26 @@ mod tests {
             let mut state = self.shared.0.lock().unwrap();
             state.checkpoint = Some(checkpoint);
             state.version_reads
+        }
+
+        fn set_capture_fails(&self, fails: bool) {
+            self.shared.0.lock().unwrap().capture_fails = fails;
+        }
+
+        fn wait_for_reads(&self, minimum: usize) {
+            let (state_lock, changed) = self.shared.as_ref();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut state = state_lock.lock().unwrap();
+            while state.reads < minimum {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(!remaining.is_zero(), "checkpoint capture read timed out");
+                let (next, timeout) = changed.wait_timeout(state, remaining).unwrap();
+                state = next;
+                assert!(
+                    !timeout.timed_out() || state.reads >= minimum,
+                    "checkpoint capture read timed out"
+                );
+            }
         }
 
         fn wait_for_version_reads(&self, minimum: usize) {
@@ -777,11 +834,19 @@ mod tests {
             version
         }
 
-        fn current_checkpoint(&self) -> Option<TerminalCheckpoint> {
+        fn current_checkpoint(
+            &self,
+        ) -> std::result::Result<Option<TerminalCheckpoint>, CheckpointSinkError> {
             let (state_lock, changed) = self.shared.as_ref();
-            let mut state = state_lock.lock().ok()?;
+            let Ok(mut state) = state_lock.lock() else {
+                return Ok(None);
+            };
             state.reads = state.reads.saturating_add(1);
-            let checkpoint = state.checkpoint.clone();
+            let checkpoint = if state.capture_fails {
+                Err(CheckpointSinkError::snapshot())
+            } else {
+                Ok(state.checkpoint.clone())
+            };
             changed.notify_all();
             checkpoint
         }
@@ -1164,6 +1229,47 @@ mod tests {
             );
             assert_eq!(handle.calls().len(), 3);
         }
+    }
+
+    #[test]
+    fn terminal_snapshot_failure_is_reported_degraded_until_capture_recovers() {
+        let root = tempfile::tempdir().unwrap();
+        let initial = checkpoint(7, 24, 80);
+        let diagnostics = RuntimeDiagnostics::open(
+            root.path(),
+            crate::runtime_diagnostics::RuntimeDiagnosticContext::new("build-1", &initial.fence),
+        );
+        let source = SharedSource::new(Some(initial));
+        source.set_capture_fails(true);
+        let (sink, handle) = FakeSink::new([], None, false);
+        let writer = PresentationCheckpointWriter::spawn_with_config(
+            Arc::new(source.clone()),
+            Box::new(sink),
+            diagnostics,
+            config(Duration::from_millis(1), Duration::from_millis(1)),
+        )
+        .unwrap();
+
+        source.wait_for_reads(2);
+        assert!(
+            handle.calls().is_empty(),
+            "a state the engine cannot encode must never reach the sink"
+        );
+        source.set_capture_fails(false);
+        handle.wait_for_calls(1);
+        writer.shutdown(RootRetired);
+
+        let raw = std::fs::read_to_string(crate::runtime_diagnostics::runtime_file(root.path()))
+            .unwrap();
+        let degraded = raw
+            .lines()
+            .filter(|line| line.contains("\"event\":\"presentation_checkpoint_degraded\""))
+            .collect::<Vec<_>>();
+        assert_eq!(degraded.len(), 1, "one failure episode is one diagnostic");
+        assert!(degraded[0].contains("\"checkpointPhase\":\"snapshot\""));
+        assert!(degraded[0].contains("\"failureCode\":\"invalid_checkpoint\""));
+        assert!(degraded[0].contains("\"outputSequence\":\"7\""));
+        assert!(raw.contains("\"event\":\"presentation_checkpoint_recovered\""));
     }
 
     #[test]
