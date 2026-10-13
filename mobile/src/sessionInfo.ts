@@ -89,12 +89,16 @@ export function sessionInfoFacts(input: SessionInfoInput): SessionInfoFact[] {
     if (fact.value.trim() !== "") facts.push(fact);
   };
 
+  // The lifecycle word only where the label folds several into one: "Needs
+  // attention" may be starting or restoring, and an unknown state has nothing
+  // else to say. "Running · running" would say one thing twice.
   const lifecycle = session.lifecycle.trim();
   const state = t(RUN_STATE_LABEL[row.state]);
+  const folded = row.state === "warn" || row.state === "blocked" || row.state === "unknown";
   add({
     id: "status",
     label: t("sessionInfo.status"),
-    value: lifecycle === "" || lifecycle.toLowerCase() === "ready" ? state : `${state} · ${lifecycle}`,
+    value: folded && lifecycle !== "" ? `${state} · ${lifecycle}` : state,
   });
   add({ id: "provider", label: t("sessionInfo.provider"), value: session.provider_id });
   const program = session.launch_program?.trim() ?? "";

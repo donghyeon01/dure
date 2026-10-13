@@ -148,10 +148,15 @@ describe("sessionInfoFacts", () => {
       .toBe(t("sessionInfo.computerOffline", { computer: "맥북" }));
   });
 
-  it("keeps the lifecycle word beside the state it folds into", () => {
-    const hubs = [laptop([hubSession("ended", { lifecycle: "exited", ready: false })])];
-    expect(byId(sessionInfoFacts({ row: rowOf({ hubs }, "ended"), hubs, now: NOW })).status)
-      .toBe(`${t("common.exited")} · exited`);
+  it("keeps the lifecycle word only where the state label folds several", () => {
+    const status = (lifecycle: string) => {
+      const hubs = [laptop([hubSession("s", { lifecycle, ready: lifecycle === "ready" })])];
+      return byId(sessionInfoFacts({ row: rowOf({ hubs }, "s"), hubs, now: NOW })).status;
+    };
+    expect(status("running")).toBe(t("session.status.running"));
+    expect(status("exited")).toBe(t("common.exited"));
+    expect(status("restoring")).toBe(`${t("session.status.attention")} · restoring`);
+    expect(status("terminating")).toBe(`${t("session.status.unknown")} · terminating`);
   });
 
   it("ends with the last refused attach and how long ago it was", () => {
