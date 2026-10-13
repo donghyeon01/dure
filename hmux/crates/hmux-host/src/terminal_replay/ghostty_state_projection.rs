@@ -175,11 +175,28 @@ pub(super) fn native_history_viewport_rows(
 }
 
 fn is_default_blank(cell: &terminal_core_ghostty_proof::ProjectedCell) -> bool {
-    is_canonical_blank_grapheme(cell) && is_default_style(&cell.style)
+    is_canonical_blank_grapheme(cell, cell.width) && is_default_style(&cell.style)
 }
 
-fn is_canonical_blank_grapheme(cell: &terminal_core_ghostty_proof::ProjectedCell) -> bool {
-    (cell.text.is_empty() || cell.text == " ") && cell.width == 1
+fn is_canonical_blank_grapheme(
+    cell: &terminal_core_ghostty_proof::ProjectedCell,
+    width: u8,
+) -> bool {
+    (cell.text.is_empty() || cell.text == " ") && width == 1
+}
+
+/// Ghostty can leave an incomplete wide pair in a live grid: shrinking the
+/// columns of a screen that does not reflow (the alternate screen) truncates
+/// a spacer tail but keeps its wide head in the new last column. Project the
+/// narrow repair Ghostty's own snapshot decoder applies, so every row stays
+/// column-aligned and its logical span never exceeds the grid.
+fn projected_cell_width(cells: &[terminal_core_ghostty_proof::ProjectedCell], index: usize) -> u8 {
+    match cells[index].width {
+        2 if cells.get(index + 1).is_some_and(|tail| tail.width == 0) => 2,
+        0 if index > 0 && cells[index - 1].width == 2 => 0,
+        0 | 2 => 1,
+        width => width,
+    }
 }
 
 fn is_default_style(style: &ProjectedStyle) -> bool {
@@ -270,12 +287,13 @@ impl TableBuilder {
         let mut cells = Vec::with_capacity(row.cells.len());
         let mut span = 0_u32;
         let mut previous_style: Option<(&ProjectedStyle, u32)> = None;
-        for cell in &row.cells {
-            let grapheme_index = if is_canonical_blank_grapheme(cell) {
+        for (column, cell) in row.cells.iter().enumerate() {
+            let width = projected_cell_width(&row.cells, column);
+            let grapheme_index = if is_canonical_blank_grapheme(cell, width) {
                 0
             } else {
                 let text = cell.text.clone();
-                let key = (text.clone(), cell.width);
+                let key = (text.clone(), width);
                 #[cfg(test)]
                 {
                     self.grapheme_hash_lookups += 1;
@@ -287,7 +305,7 @@ impl TableBuilder {
                         .map_err(|_| engine_error("allocate grapheme table", -100))?;
                     self.graphemes.push(Grapheme {
                         text,
-                        display_width: u32::from(cell.width),
+                        display_width: u32::from(width),
                     });
                     self.grapheme_indices.insert(key, index);
                     index
@@ -303,7 +321,7 @@ impl TableBuilder {
                 style_index,
             });
             span = span
-                .checked_add(u32::from(cell.width))
+                .checked_add(u32::from(width))
                 .ok_or_else(|| engine_error("measure projected row", -100))?;
         }
         Ok((cells, span))
@@ -500,6 +518,62 @@ mod tests {
         assert_eq!(projected[1].termination, RowTermination::HardBreak as i32);
         assert_eq!(projected[0].logical_line_id, projected[1].logical_line_id);
         assert_ne!(projected[1].logical_line_id, projected[2].logical_line_id);
+    }
+
+    #[test]
+    fn incomplete_wide_pairs_project_as_narrow_cells_within_the_grid() {
+        let cell = |text: &str, width: u8| ProjectedCell {
+            width,
+            ..row(text, false, false).cells.remove(0)
+        };
+        // An orphan tail, a head followed by a narrow cell, one intact pair,
+        // a second tail after that pair, and a head truncated at the edge.
+        let rows = vec![ProjectedRow {
+            wraps: false,
+            continues: false,
+            cells: vec![
+                cell("", 0),
+                cell("A", 2),
+                cell("B", 1),
+                cell("C", 2),
+                cell("", 0),
+                cell("", 0),
+                cell("D", 2),
+            ],
+        }];
+        let mut tables = TableBuilder::new();
+
+        let projected = tables
+            .anchored_rows(
+                &rows,
+                LogicalCellAnchor {
+                    logical_line_id: 1,
+                    logical_cell_offset: 0,
+                },
+            )
+            .unwrap();
+
+        let widths = projected[0]
+            .cells
+            .iter()
+            .map(|cell| {
+                let grapheme = &tables.graphemes[cell.grapheme_index as usize];
+                (grapheme.text.as_str(), grapheme.display_width)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            widths,
+            vec![
+                (" ", 1),
+                ("A", 1),
+                ("B", 1),
+                ("C", 2),
+                ("", 0),
+                (" ", 1),
+                ("D", 1),
+            ]
+        );
+        assert_eq!(projected[0].logical_cell_span, 7);
     }
 
     #[test]

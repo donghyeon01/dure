@@ -1453,6 +1453,35 @@ mod tests {
     }
 
     #[test]
+    fn alternate_screen_column_shrink_through_a_wide_pair_stays_within_the_grid() {
+        let mut replay = replay();
+        replay.resize(4, 25).unwrap();
+        // One narrow cell puts every wide head on an odd column, so the last
+        // pair spans the final two columns until the grid loses one column.
+        let mut output = b"\x1b[?1049h\x1b[Hx".to_vec();
+        output.extend("가".repeat(12).as_bytes());
+        replay.ingest_output(&output).unwrap();
+        replay.resize(4, 24).unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+
+        let record = protocol_round_trip(take_frame(&mut replay, &mut projection), 1);
+
+        let frame = frame(&record);
+        let tables = frame.tables.as_ref().unwrap();
+        let widths = frame.rows[0]
+            .cells
+            .iter()
+            .map(|cell| tables.graphemes[cell.grapheme_index as usize].display_width)
+            .collect::<Vec<_>>();
+        assert_eq!(frame.active_buffer, BufferId::Alternate as i32);
+        assert_eq!(frame.rows[0].logical_cell_span, 24);
+        assert_eq!(widths.len(), 24);
+        assert_eq!(&widths[..5], &[1, 2, 0, 2, 0]);
+        assert_eq!(widths[23], 1);
+        assert_eq!(row_text(frame, 0), format!("x{}", "가".repeat(12)));
+    }
+
+    #[test]
     fn scrolling_past_tail_reuses_the_complete_captured_viewport() {
         for downward_rows in [1, 2, 64] {
             let mut replay = replay();
