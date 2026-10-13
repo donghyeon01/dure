@@ -366,6 +366,8 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.partial":
 		"Solo se muestra una parte de la lista de proyectos.",
 	"agents.projectMove.failed": "No se pudo preparar el traslado.",
+	"agents.projectMove.sourceBusy":
+		"Esta conversación sigue trabajando. Muévela cuando termine o se detenga.",
 	"agents.projectMove.unconfirmed":
 		"El traslado no está confirmado. Reintenta este mismo plan o consulta el estado del entorno antes de otro traslado.",
 	"agents.projectMove.status": "Consultar estado",

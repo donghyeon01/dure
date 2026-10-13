@@ -310,31 +310,37 @@ pub(super) async fn preflight(
             .map_err(|error| error.code)?;
     } else {
         let launch = intent.effective_launch_selection();
-        let mut provider = state
+        let permission_mode = intent.effective_permission_mode();
+        state
             .agent_providers
-            .session_launch_plan(
-                &intent.source.provider_id,
-                &intent.effective_permission_mode(),
-                launch.model.as_ref(),
-                launch.effort.as_ref(),
-                intent.provider_conversation_ref.as_option(),
-                hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            .project_move_session_launch_plan(
+                dure_app::AgentProviderSessionLaunchRequestV1 {
+                    provider_id: &intent.source.provider_id,
+                    permission_mode: &permission_mode,
+                    model: launch.model.as_ref(),
+                    effort: launch.effort.as_ref(),
+                    provider_conversation_ref: intent.provider_conversation_ref.as_option(),
+                    conversation_placeholder:
+                        hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+                },
+                std::path::Path::new(&movement.target_workspace.root_path),
             )
             .map_err(|error| error.code.as_str().to_owned())?
             .ok_or("agent_runtime_native_profile_unavailable")?;
-        dure_provider_adapter::native_provider_project_move(
-            &intent.source.provider_id,
-            &mut provider,
-            std::path::Path::new(&movement.target_workspace.root_path),
-        )
-        .map_err(|error| error.as_str().to_owned())?;
         if let Some((minimum, maximum_exclusive)) =
             dure_provider_adapter::native_provider_project_move_version_range(
                 &intent.source.provider_id,
             )
         {
+            // Probe the provider itself. Its launch plan may start through an
+            // integration or launch-channel wrapper with another version.
+            let provider = state
+                .agent_providers
+                .preflight_plan(&intent.source.provider_id)
+                .map_err(|error| error.code.as_str().to_owned())?
+                .ok_or("agent_runtime_native_profile_unavailable")?;
             crate::provider_executable::require_version_range(
-                &provider.launch.executable,
+                &provider.executable,
                 minimum,
                 maximum_exclusive,
             )

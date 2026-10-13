@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt, path::Path, sync::Arc, time::Duration};
 
 use crate::{
     AgentExecutionProfileV1, AgentInteractionProfileV1, AgentProviderConversationPlanV1,
@@ -61,6 +61,17 @@ pub struct AgentProviderStructuredSessionRequestV1<'a> {
     pub effort: Option<&'a AgentSpawnEffortSelectionV1>,
     pub has_setup_command: bool,
     pub provider_conversation_ref: &'a AgentProviderConversationPlanV1,
+}
+
+/// One exact session selection, as `session_launch_plan` takes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AgentProviderSessionLaunchRequestV1<'a> {
+    pub provider_id: &'a ProviderIdV1,
+    pub permission_mode: &'a ProviderPermissionModeV1,
+    pub model: Option<&'a AgentSpawnModelSelectionV1>,
+    pub effort: Option<&'a AgentSpawnEffortSelectionV1>,
+    pub provider_conversation_ref: Option<&'a str>,
+    pub conversation_placeholder: &'a str,
 }
 
 /// The first production AgentProvider capability.
@@ -129,6 +140,20 @@ pub trait AgentProviderImplementation: ExtensionImplementation {
             )?,
             resume_arguments: None,
         })
+    }
+
+    /// Relaunch an exact conversation from another project root. The adapter
+    /// adapts only its own argv; integrations and launch wrappers are applied
+    /// afterwards and are never provider arguments.
+    fn project_move_session_launch_plan(
+        &self,
+        _request: AgentProviderSessionLaunchRequestV1<'_>,
+        _directory: &Path,
+    ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+        Err(
+            ExtensionFailureCodeV1::new("conversation_project_move_unsupported")
+                .expect("static failure code is valid"),
+        )
     }
 
     /// Resolve an optional structured launch before any process mutation.
@@ -350,6 +375,25 @@ impl AgentProviderRegistry {
             .map_err(|code| AgentProviderOperationErrorV1 {
                 extension_id: provider.extension_id.clone(),
                 provider_id: provider_id.clone(),
+                code,
+            })
+    }
+
+    pub fn project_move_session_launch_plan(
+        &self,
+        request: AgentProviderSessionLaunchRequestV1<'_>,
+        directory: &Path,
+    ) -> Result<Option<AgentProviderSessionLaunchPlanV1>, AgentProviderOperationErrorV1> {
+        let Some(provider) = self.providers.get(request.provider_id) else {
+            return Ok(None);
+        };
+        provider
+            .implementation
+            .project_move_session_launch_plan(request, directory)
+            .map(Some)
+            .map_err(|code| AgentProviderOperationErrorV1 {
+                extension_id: provider.extension_id.clone(),
+                provider_id: request.provider_id.clone(),
                 code,
             })
     }

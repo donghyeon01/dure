@@ -365,6 +365,8 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.confirm": "다시 시작하고 이동",
 	"agents.projectMove.partial": "프로젝트 목록의 일부만 표시됩니다.",
 	"agents.projectMove.failed": "이동을 준비할 수 없습니다.",
+	"agents.projectMove.sourceBusy":
+		"이 대화는 아직 작업 중입니다. 작업이 끝나거나 멈춘 뒤에 옮기세요.",
 	"agents.projectMove.unconfirmed":
 		"이동이 확인되지 않았습니다. 동일한 계획을 재시도하거나 다른 이동 전에 런타임 상태를 확인하세요.",
 	"agents.projectMove.status": "상태 확인",

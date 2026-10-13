@@ -545,23 +545,35 @@ pub(super) async fn start_target(
     let source = &transition.intent.source;
     let launch = transition.intent.effective_launch_selection();
     let permission_mode = transition.intent.effective_permission_mode();
-    let mut provider = state
-        .agent_providers
-        .session_launch_plan(
-            &source.provider_id,
-            &permission_mode,
-            launch.model.as_ref(),
-            launch.effort.as_ref(),
-            transition.intent.provider_conversation_ref.as_option(),
-            hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+    let request = dure_app::AgentProviderSessionLaunchRequestV1 {
+        provider_id: &source.provider_id,
+        permission_mode: &permission_mode,
+        model: launch.model.as_ref(),
+        effort: launch.effort.as_ref(),
+        provider_conversation_ref: transition.intent.provider_conversation_ref.as_option(),
+        conversation_placeholder: hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+    };
+    let provider = match &transition.intent.workspace_move {
+        Some(movement) => state.agent_providers.project_move_session_launch_plan(
+            request,
+            std::path::Path::new(&movement.target_workspace.root_path),
+        ),
+        None => state.agent_providers.session_launch_plan(
+            request.provider_id,
+            request.permission_mode,
+            request.model,
+            request.effort,
+            request.provider_conversation_ref,
+            request.conversation_placeholder,
+        ),
+    }
+    .map_err(|error| {
+        native_repair(
+            AgentRuntimeTargetFailureKindV1::TargetInvalid,
+            error.code.as_str(),
         )
-        .map_err(|error| {
-            native_repair(
-                AgentRuntimeTargetFailureKindV1::TargetInvalid,
-                error.code.as_str(),
-            )
-        })?
-        .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_native_profile_unavailable"))?;
+    })?
+    .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_native_profile_unavailable"))?;
     let provider_executable = crate::resolve_provider_executable(&provider.launch.executable)
         .map_err(|_| TargetStartFailure::retryable("agent_runtime_native_profile_unavailable"))?;
     let provider_executable = provider_executable
@@ -581,19 +593,6 @@ pub(super) async fn start_target(
             .await
             .map_err(TargetStartFailure::retryable)?
     };
-    if transition.intent.workspace_move.is_some() {
-        dure_provider_adapter::native_provider_project_move(
-            &source.provider_id,
-            &mut provider,
-            &workspace,
-        )
-        .map_err(|error| {
-            native_repair(
-                AgentRuntimeTargetFailureKindV1::TargetInvalid,
-                error.as_str(),
-            )
-        })?;
-    }
     let working_directory = workspace
         .to_str()
         .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_workspace_unavailable"))?

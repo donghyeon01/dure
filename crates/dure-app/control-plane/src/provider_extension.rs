@@ -464,6 +464,40 @@ pub(crate) fn test_codex_structured_agent_provider_registry() -> AgentProviderRe
     )
 }
 
+/// An installed app binds its launch channel around the provider integration.
+#[cfg(test)]
+pub(crate) fn test_installed_provider_registry(
+    provider: &str,
+    executable: &str,
+    integration: ProviderRuntimeIntegrationV1,
+) -> AgentProviderRegistry {
+    struct Installed(ProviderRuntimeIntegrationV1);
+    impl ProviderRuntimeIntegrationSource for Installed {
+        fn app_channel(&self) -> Option<&str> {
+            Some(STABLE_CHANNEL)
+        }
+        fn integration(
+            &self,
+            _: &ProviderIdV1,
+        ) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1> {
+            Ok(self.0.clone())
+        }
+    }
+    let mut registry = AgentProviderRegistry::default();
+    register_provider(
+        &mut registry,
+        BundledAgentProvider::new(
+            "dure.test.installed",
+            "Dure installed test provider",
+            provider,
+            executable,
+            Arc::new(Installed(integration)),
+            false,
+        ),
+    );
+    registry
+}
+
 #[cfg(test)]
 pub(crate) fn test_agent_provider_registry(executable: &str) -> AgentProviderRegistry {
     test_bundled_provider_registry("codex", executable, false)

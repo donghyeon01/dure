@@ -259,9 +259,11 @@ async fn project_move_resumes_exact_history_at_destination_and_replays_one_write
         requests[0].provider_conversation_ref.as_deref(),
         Some(CONVERSATION)
     );
-    assert_eq!(
-        &requests[0].provider_arguments[..2],
-        &["--cd".to_owned(), requests[0].working_directory.clone()]
+    assert!(
+        requests[0]
+            .provider_arguments
+            .windows(2)
+            .any(|pair| pair == ["--cd", requests[0].working_directory.as_str()])
     );
     assert!(requests[0].initial_prompt.is_none());
     assert_eq!(
@@ -770,6 +772,73 @@ async fn claude_project_move_refuses_background_auto_attach_versions_before_stop
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn installed_launch_wrappers_keep_the_project_move_in_the_provider_argv() {
+    for provider in ["claude", "codex"] {
+        let (root, destination, mut state, launcher) =
+            setup_provider(vec![LaunchOutcome::Succeed], provider).await;
+        let fixture = root.path().join("codex-fixture");
+        fs::write(
+            &fixture,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2.1.223 (Claude Code)\\n'; else printf '%s\\n' \"$@\"; fi\n",
+        )
+        .unwrap();
+        fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755)).unwrap();
+        let integration = if provider == "claude" {
+            dure_app::ProviderRuntimeIntegrationV1::SettingsFile {
+                path: "/fixture/managed-claude-settings.json".into(),
+            }
+        } else {
+            let wrapper = root.path().join("managed-codex-native.sh");
+            fs::write(&wrapper, "#!/bin/sh\nexec \"$@\"\n").unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+            dure_app::ProviderRuntimeIntegrationV1::CommandWrapper {
+                path: wrapper.to_str().unwrap().into(),
+            }
+        };
+        state.agent_providers = Arc::new(provider_extension::test_installed_provider_registry(
+            provider,
+            fixture.to_str().unwrap(),
+            integration,
+        ));
+        let plan = preview(&state, &format!("{provider}-installed-move"))
+            .await
+            .unwrap()["plan"]
+            .clone();
+        write_provider_inspection(&state, provider, "exited", Some(&plan), None);
+        state.hmux_identity = resolve_hmux_toolchain_identity(
+            &state.hmux_identity.executable_path,
+            &state.hmux_identity.runtime_executable_path,
+            &state.hmux_identity.discovery_root,
+        )
+        .unwrap();
+        apply(&state, plan).await.unwrap();
+        let requests = launcher.requests();
+        assert_eq!(requests.len(), 1);
+        let output = std::process::Command::new(&requests[0].provider_executable)
+            .args(&requests[0].provider_arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{provider}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let argv = String::from_utf8(output.stdout).unwrap();
+        let argv = argv.lines().collect::<Vec<_>>();
+        let destination = destination.path().canonicalize().unwrap();
+        let expected = if provider == "claude" {
+            ["--resume", CONVERSATION]
+        } else {
+            ["--cd", destination.to_str().unwrap()]
+        };
+        assert!(
+            argv.windows(2).any(|pair| pair == expected),
+            "{provider} argv: {argv:?}"
+        );
+    }
 }
 
 mod structured;

@@ -366,6 +366,8 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.partial":
 		"Apenas parte da lista de projetos está disponível.",
 	"agents.projectMove.failed": "Não foi possível preparar a mudança.",
+	"agents.projectMove.sourceBusy":
+		"Esta conversa ainda está em andamento. Mova-a depois que terminar ou parar.",
 	"agents.projectMove.unconfirmed":
 		"A mudança não foi confirmada. Tente novamente este plano exato ou consulte o estado do ambiente antes de outra mudança.",
 	"agents.projectMove.status": "Verificar estado",

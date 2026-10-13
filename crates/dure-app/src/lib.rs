@@ -84,8 +84,9 @@ pub use agent_plugin_cli_plan::{AgentNativePluginCliPlanErrorV2, plan_agent_nati
 pub use agent_provider_registry::{
     AgentProviderImplementation, AgentProviderLaunchPlanV1, AgentProviderOperationErrorV1,
     AgentProviderPreflightPlanV1, AgentProviderPromptTargetV1, AgentProviderRegistrationErrorV1,
-    AgentProviderRegistry, AgentProviderSessionLaunchPlanV1, AgentProviderStructuredSessionPlanV1,
-    AgentProviderStructuredSessionRequestV1, agent_provider_launch_prompt_is_valid,
+    AgentProviderRegistry, AgentProviderSessionLaunchPlanV1, AgentProviderSessionLaunchRequestV1,
+    AgentProviderStructuredSessionPlanV1, AgentProviderStructuredSessionRequestV1,
+    agent_provider_launch_prompt_is_valid,
 };
 pub use agent_queue::*;
 pub use agent_recovery::*;

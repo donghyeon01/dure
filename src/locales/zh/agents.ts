@@ -366,6 +366,8 @@ export const agents: Record<string, string> = {
 	"agents.projectMove.confirm": "重启并移动",
 	"agents.projectMove.partial": "仅显示部分项目列表。",
 	"agents.projectMove.failed": "无法准备移动。",
+	"agents.projectMove.sourceBusy":
+		"此对话仍在工作中。请在其完成或停止后再移动。",
 	"agents.projectMove.unconfirmed":
 		"移动尚未确认。请重试此计划，或在再次移动前检查运行时状态。",
 	"agents.projectMove.status": "检查状态",

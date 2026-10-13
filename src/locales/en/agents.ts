@@ -365,6 +365,8 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.projectMove.confirm": "Restart and move",
 	"agents.projectMove.partial": "Only part of the project list is available.",
 	"agents.projectMove.failed": "The move could not be prepared.",
+	"agents.projectMove.sourceBusy":
+		"This conversation is still working. Move it after it finishes or stops.",
 	"agents.projectMove.unconfirmed":
 		"The move is unconfirmed. Retry this exact plan or inspect runtime status before another move.",
 	"agents.projectMove.status": "Check status",

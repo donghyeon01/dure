@@ -1,6 +1,6 @@
 use super::*;
-use dure_app::AgentProviderSessionLaunchPlanV1;
-use dure_provider_adapter::native_provider_session_launch_plan;
+use dure_app::{AgentProviderSessionLaunchPlanV1, AgentProviderSessionLaunchRequestV1};
+use dure_provider_adapter::{native_provider_project_move, native_provider_session_launch_plan};
 
 fn conversation(reference: Option<&str>) -> NativeProviderConversationReference<'_> {
     reference.map_or(
@@ -11,6 +11,28 @@ fn conversation(reference: Option<&str>) -> NativeProviderConversationReference<
 
 fn missing_launch_plan() -> ExtensionFailureCodeV1 {
     ExtensionFailureCodeV1::new("launch_plan_missing").expect("static failure code is valid")
+}
+
+/// A project move adapts only the provider's own argv. Integration and launch
+/// channel wrappers are applied afterwards; their arguments are not the
+/// provider's and must not be reinterpreted as provider flags.
+fn native_session_plan(
+    request: AgentProviderSessionLaunchRequestV1<'_>,
+    project_directory: Option<&Path>,
+) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+    let mut plan = native_provider_session_launch_plan(
+        request.provider_id,
+        request.permission_mode,
+        request.model,
+        request.effort,
+        conversation(request.provider_conversation_ref),
+        request.conversation_placeholder,
+    )?
+    .ok_or_else(missing_launch_plan)?;
+    if let Some(directory) = project_directory {
+        native_provider_project_move(request.provider_id, &mut plan, directory)?;
+    }
+    Ok(plan)
 }
 
 fn integrate_session_launch(
@@ -100,6 +122,23 @@ pub(super) fn bind_session_channel(
     bind_launch_channel(source, &mut plan.launch)
 }
 
+impl BundledAgentProvider {
+    fn session_plan(
+        &self,
+        request: AgentProviderSessionLaunchRequestV1<'_>,
+        project_directory: Option<&Path>,
+    ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+        let preflight = self.preflight_plan(request.provider_id)?;
+        // Resolve the integration once so launch and resume retain one selection.
+        let integration = self.integrations.integration(request.provider_id)?;
+        let mut plan = native_session_plan(request, project_directory)?;
+        plan.launch.executable = preflight.executable;
+        integrate_session_launch(request.provider_id, &integration, &mut plan)?;
+        bind_session_channel(self.integrations.as_ref(), &mut plan)?;
+        Ok(plan)
+    }
+}
+
 impl AgentProviderImplementation for BundledAgentProvider {
     fn preflight_plan(
         &self,
@@ -147,22 +186,25 @@ impl AgentProviderImplementation for BundledAgentProvider {
         provider_conversation_ref: Option<&str>,
         conversation_placeholder: &str,
     ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
-        let preflight = self.preflight_plan(provider_id)?;
-        // Resolve the integration once so launch and resume retain one selection.
-        let integration = self.integrations.integration(provider_id)?;
-        let mut plan = native_provider_session_launch_plan(
-            provider_id,
-            permission_mode,
-            model,
-            effort,
-            conversation(provider_conversation_ref),
-            conversation_placeholder,
-        )?
-        .ok_or_else(missing_launch_plan)?;
-        plan.launch.executable = preflight.executable;
-        integrate_session_launch(provider_id, &integration, &mut plan)?;
-        bind_session_channel(self.integrations.as_ref(), &mut plan)?;
-        Ok(plan)
+        self.session_plan(
+            AgentProviderSessionLaunchRequestV1 {
+                provider_id,
+                permission_mode,
+                model,
+                effort,
+                provider_conversation_ref,
+                conversation_placeholder,
+            },
+            None,
+        )
+    }
+
+    fn project_move_session_launch_plan(
+        &self,
+        request: AgentProviderSessionLaunchRequestV1<'_>,
+        directory: &Path,
+    ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+        self.session_plan(request, Some(directory))
     }
 
     fn structured_session_plan(
@@ -184,6 +226,26 @@ impl AgentProviderImplementation for BundledAgentProvider {
         provider_conversation_ref: Option<&str>,
     ) -> AgentProviderPromptTargetV1 {
         native_provider_prompt_target(provider_id, provider_conversation_ref).unwrap_or_default()
+    }
+}
+
+impl NativeAgentProviders {
+    fn session_plan(
+        &self,
+        request: AgentProviderSessionLaunchRequestV1<'_>,
+        project_directory: Option<&Path>,
+    ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+        let provider_id = request.provider_id;
+        let mut plan = native_session_plan(request, project_directory)?;
+        if provider_id.as_str() == "pi" || cfg!(unix) && provider_id.as_str() == "gemini" {
+            integrate_session_launch(
+                provider_id,
+                &self.integrations.integration(provider_id)?,
+                &mut plan,
+            )?;
+        }
+        bind_session_channel(self.integrations.as_ref(), &mut plan)?;
+        Ok(plan)
     }
 }
 
@@ -234,24 +296,25 @@ impl AgentProviderImplementation for NativeAgentProviders {
         provider_conversation_ref: Option<&str>,
         conversation_placeholder: &str,
     ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
-        let mut plan = native_provider_session_launch_plan(
-            provider_id,
-            permission_mode,
-            model,
-            effort,
-            conversation(provider_conversation_ref),
-            conversation_placeholder,
-        )?
-        .ok_or_else(missing_launch_plan)?;
-        if provider_id.as_str() == "pi" || cfg!(unix) && provider_id.as_str() == "gemini" {
-            integrate_session_launch(
+        self.session_plan(
+            AgentProviderSessionLaunchRequestV1 {
                 provider_id,
-                &self.integrations.integration(provider_id)?,
-                &mut plan,
-            )?;
-        }
-        bind_session_channel(self.integrations.as_ref(), &mut plan)?;
-        Ok(plan)
+                permission_mode,
+                model,
+                effort,
+                provider_conversation_ref,
+                conversation_placeholder,
+            },
+            None,
+        )
+    }
+
+    fn project_move_session_launch_plan(
+        &self,
+        request: AgentProviderSessionLaunchRequestV1<'_>,
+        directory: &Path,
+    ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
+        self.session_plan(request, Some(directory))
     }
 
     fn structured_session_plan(

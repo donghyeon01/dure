@@ -67,6 +67,7 @@ export function AgentProjectMove({
 					: undefined;
 			if (String(code).startsWith("agent_project_move_provider_version_"))
 				setError("versionRequired");
+			if (code === "agent_runtime_source_busy") setError("sourceBusy");
 			if (
 				[
 					"agent_project_move_preview_stale",
@@ -203,7 +204,9 @@ export function AgentProjectMove({
 									? "agents.projectMove.unconfirmed"
 									: error === "versionRequired"
 										? "agents.projectMove.versionRequired"
-										: "agents.projectMove.failed",
+										: error === "sourceBusy"
+											? "agents.projectMove.sourceBusy"
+											: "agents.projectMove.failed",
 							)}
 						</ErrorText>
 					)}

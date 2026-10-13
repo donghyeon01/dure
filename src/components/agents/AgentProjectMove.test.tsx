@@ -142,6 +142,27 @@ it("recovers durable repair controls after the pane remounts without another pre
 	await waitFor(() => expect(f.repair).toHaveBeenCalledWith(plan));
 	expect(f.preview).toHaveBeenCalledOnce();
 });
+it("says a working conversation must finish before it can move", async () => {
+	f.preview.mockRejectedValueOnce(
+		Object.assign(new Error("busy"), { code: "agent_runtime_source_busy" }),
+	);
+	render(<AgentProjectMove agentId="agent-1" />);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.title") }),
+	);
+	await screen.findByRole("option", { name: "New" });
+	fireEvent.change(screen.getByRole("combobox"), { target: { value: "new" } });
+	fireEvent.click(
+		screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+	);
+	await screen.findByText(t("agents.projectMove.sourceBusy"));
+	expect(screen.queryByText(t("agents.projectMove.failed"))).toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: t("common.retry") }));
+	await waitFor(() => expect(f.prepare).toHaveBeenCalledTimes(2));
+	expect(screen.queryByText(t("agents.projectMove.sourceBusy"))).toBeNull();
+	expect(f.apply).not.toHaveBeenCalled();
+});
+
 it("refreshes a locally stale preparation without closing the dialog", async () => {
 	f.preview.mockRejectedValueOnce(
 		Object.assign(new Error("client_project_move_preview_stale"), {
