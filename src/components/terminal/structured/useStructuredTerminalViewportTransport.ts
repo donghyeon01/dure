@@ -894,6 +894,5 @@ export function useStructuredTerminalViewportTransport({
 		requestViewportRows,
 		supportsCapability,
 		resolveResizeFailure: failure.resolveCurrentResize,
-		reportFailure: failure.report,
 	};
 }

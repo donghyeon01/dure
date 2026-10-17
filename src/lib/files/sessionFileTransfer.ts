@@ -20,6 +20,8 @@ async function routePreparedFiles(
 			throw new Error(t("files.transfer.remoteUpdateRequired"));
 		if (/session_file_(ssh|session|process)_changed/.test(message))
 			throw new Error(t("files.transfer.sessionChanged"));
+		if (message.includes("session_file_process_unavailable"))
+			throw new Error(t("files.transfer.processUnavailable"));
 		if (/session_file_ssh_(options|remote_command)_unsupported/.test(message))
 			throw new Error(t("files.transfer.sshRouteUnsupported"));
 		throw cause;

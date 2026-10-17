@@ -1,10 +1,6 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { type RefObject, useEffect } from "react";
-import {
-	type DroppedFilePayload,
-	describeExternalFileDropError,
-} from "@/lib/files/externalFileDrop";
-import { t } from "@/lib/i18n";
+import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
 import { installTerminalFileDrop } from "@/lib/terminal/interaction/terminalFileDrop";
 
 interface StructuredTerminalFileDropOptions {
@@ -19,7 +15,8 @@ interface StructuredTerminalFileDropOptions {
 	/** The attachment this surface would send to right now, if any. */
 	readonly currentAttachmentId: () => string | undefined;
 	readonly forwardUserInput: (text: string) => void;
-	readonly reportFailure: (cause: unknown) => void;
+	/** A failed file preparation; the terminal is unaffected. */
+	readonly reportTransferFailure: (cause: unknown) => void;
 }
 
 /**
@@ -40,7 +37,7 @@ export function useStructuredTerminalFileDrop({
 	paneApi,
 	currentAttachmentId,
 	forwardUserInput,
-	reportFailure,
+	reportTransferFailure,
 }: StructuredTerminalFileDropOptions): void {
 	useEffect(() => {
 		const host = containerRef.current;
@@ -64,7 +61,7 @@ export function useStructuredTerminalFileDrop({
 			},
 			onError: (cause) => {
 				if (currentAttachmentId() !== droppedAttachmentId) return;
-				reportFailure(describeExternalFileDropError(cause, t));
+				reportTransferFailure(cause);
 			},
 		});
 	}, [
@@ -75,6 +72,6 @@ export function useStructuredTerminalFileDrop({
 		inputRef,
 		paneApi,
 		prepareFiles,
-		reportFailure,
+		reportTransferFailure,
 	]);
 }

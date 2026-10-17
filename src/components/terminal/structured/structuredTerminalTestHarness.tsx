@@ -179,6 +179,7 @@ export function clipboardManagerMockFactory() {
 export function toastMockFactory() {
 	return {
 		showToast: mocks.showToast,
+		showErrorToast: mocks.showErrorToast,
 	};
 }
 
@@ -784,6 +785,7 @@ export function resetStructuredTerminalHarness(): void {
 		.mockImplementation(async ({ paths }: { paths: string[] }) => paths);
 	mocks.writeClipboard.mockClear();
 	mocks.showToast.mockClear();
+	mocks.showErrorToast.mockClear();
 	mocks.setHmuxSessionMetadata.mockClear();
 	mocks.setSessionAgent.mockClear();
 	mocks.setSessionAgentPin.mockClear();

@@ -9,6 +9,8 @@ export const files: Record<string, string> = {
 		"이 세션에 파일을 붙여넣으려면 연결된 서버의 Hmux를 업데이트하세요.",
 	"files.transfer.sessionChanged":
 		"업로드 중 세션 또는 SSH 연결이 바뀌었습니다. 파일을 다시 붙여넣으세요.",
+	"files.transfer.processUnavailable":
+		"컴퓨터가 너무 바빠 이 터미널에서 실행 중인 프로그램을 확인하지 못해 붙여넣지 않았습니다. 파일을 다시 붙여넣으세요.",
 	"files.transfer.sshRouteUnsupported":
 		"이 SSH 명령의 옵션은 파일 붙여넣기에서 안전하게 재사용할 수 없습니다. Dure의 SSH 연결로 대상 서버를 여세요.",
 };

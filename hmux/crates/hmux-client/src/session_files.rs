@@ -14,12 +14,19 @@ use hebbian_process_sampler::{
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::OpenOptions;
-use std::io::Read;
+use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// A bounded census can miss its deadline while the machine is saturated.
+/// Routing answers one paste or drop, so retry before refusing it.
+const CENSUS_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SshRoute {
@@ -156,17 +163,47 @@ fn transfer_arguments(argv: &[String]) -> Result<Vec<String>, String> {
     Ok(result)
 }
 
+/// Retries only failures that a later census can clear; anything else, such as
+/// the session's process leaving the census, is returned at once.
+fn retry_transient_census<T>(
+    mut observe: impl FnMut() -> io::Result<T>,
+    mut pause: impl FnMut(Duration),
+) -> io::Result<T> {
+    let mut delays = CENSUS_RETRY_DELAYS.into_iter();
+    loop {
+        match observe() {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                ) =>
+            {
+                let Some(delay) = delays.next() else {
+                    return Err(error);
+                };
+                pause(delay);
+            }
+            result => return result,
+        }
+    }
+}
+
 fn observe_route(root_pid: u32, sampler: &SharedProcessSampler) -> Result<FileRoute, String> {
     // Coalesce with other Host census users. A forced fresh census refuses an
     // already-running sample; the complete-census owner bounds the wait and age.
     // Direct generation/argv checks below and around upload validate this witness.
-    let snapshot = sampler
-        .complete_process_snapshot_containing(root_pid, Duration::from_millis(500))
-        .map_err(|e| e.to_string())?;
-    let foreground = sampler
-        .foreground_process(root_pid)
-        .map_err(|e| e.to_string())?
-        .ok_or("session_file_foreground_unavailable")?;
+    let (snapshot, foreground) = retry_transient_census(
+        || {
+            let snapshot = sampler
+                .complete_process_snapshot_containing(root_pid, Duration::from_millis(500))?;
+            Ok((snapshot, sampler.foreground_process(root_pid)?))
+        },
+        std::thread::sleep,
+    )
+    .map_err(|error| format!("session_file_process_unavailable: {error}"))?;
+    let foreground = foreground.ok_or("session_file_foreground_unavailable")?;
     let mut ancestry = HashSet::from([root_pid]);
     loop {
         let before = ancestry.len();
@@ -389,6 +426,53 @@ mod tests {
     use super::*;
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).into()).collect()
+    }
+
+    #[test]
+    fn transient_census_failures_retry_within_a_fixed_budget() {
+        let mut attempts = 0;
+        let mut pauses = Vec::new();
+        let observed = retry_transient_census(
+            || {
+                attempts += 1;
+                match attempts {
+                    1 => Err(io::Error::new(io::ErrorKind::TimedOut, "process_exit")),
+                    2 => Err(io::Error::new(io::ErrorKind::WouldBlock, "unavailable")),
+                    _ => Ok(7),
+                }
+            },
+            |delay| pauses.push(delay),
+        )
+        .unwrap();
+        assert_eq!(observed, 7);
+        assert_eq!(pauses, CENSUS_RETRY_DELAYS[..2]);
+
+        let mut attempts = 0;
+        let error = retry_transient_census::<()>(
+            || {
+                attempts += 1;
+                Err(io::Error::new(io::ErrorKind::TimedOut, "process_exit"))
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(attempts, CENSUS_RETRY_DELAYS.len() + 1);
+    }
+
+    #[test]
+    fn permanent_census_failures_are_not_retried() {
+        let mut attempts = 0;
+        let error = retry_transient_census::<()>(
+            || {
+                attempts += 1;
+                Err(io::Error::new(io::ErrorKind::NotFound, "process left"))
+            },
+            |_| panic!("a permanent failure must not pause"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(attempts, 1);
     }
 
     #[test]

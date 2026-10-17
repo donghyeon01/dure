@@ -86,7 +86,8 @@ export function describeExternalFileDropError(
     vars?: Record<string, string | number>,
   ) => string,
 ): string {
-  if (!(error instanceof ExternalFileDropError)) return String(error);
+  if (!(error instanceof ExternalFileDropError))
+    return error instanceof Error ? error.message : String(error);
   switch (error.code) {
     case "too_many_files":
       return t("files.transfer.tooManyFiles");

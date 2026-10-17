@@ -2760,10 +2760,11 @@ describe("StructuredTerminalView resize transaction", () => {
 			});
 			if (routeChanged) {
 				await waitFor(() =>
-					expect(view.getByRole("alert").textContent).toContain(
+					expect(mocks.showErrorToast).toHaveBeenCalledWith(
 						t("files.transfer.sessionChanged"),
 					),
 				);
+				expect(view.queryByRole("alert")).toBeNull();
 				expect(sentInputIntents("paste")).toHaveLength(0);
 			} else {
 				await waitFor(() => expect(sentInputIntents("paste")).toHaveLength(1));
@@ -2779,6 +2780,44 @@ describe("StructuredTerminalView resize transaction", () => {
 			}
 		},
 	);
+
+	it("reports a busy process census in the pane without failing the attachment", async () => {
+		const onRecords = installAttachMock();
+		const resume = vi.fn(async () => {});
+		const view = renderTerminalView({
+			attachRecovery: {
+				ownerKey: "fixture-runtime",
+				intent: "resume",
+				resume,
+				automatic: true,
+				context: "pane-a",
+			},
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledOnce());
+		await deliverViewportFrame(onRecords[0]);
+		mocks.readClipboardImage.mockResolvedValue({
+			dataB64: "aW1hZ2U=",
+			ext: "png",
+		});
+		mocks.saveTempFiles.mockResolvedValue(["/tmp/mac/pasted-image.png"]);
+		mocks.routeSessionFiles.mockRejectedValue(
+			"session_file_process_unavailable: bounded process table sampling failed at process_exit",
+		);
+		mocks.send.mockClear();
+		fireEvent.paste(terminalInput(view), {
+			clipboardData: { items: [], getData: () => "" },
+		});
+		await waitFor(() =>
+			expect(mocks.showErrorToast).toHaveBeenCalledWith(
+				t("files.transfer.processUnavailable"),
+			),
+		);
+		expect(view.queryByRole("alert")).toBeNull();
+		expect(sentInputIntents("paste")).toHaveLength(0);
+		expect(resume).not.toHaveBeenCalled();
+		expect(mocks.attach).toHaveBeenCalledOnce();
+		expect(mocks.detach).not.toHaveBeenCalled();
+	});
 });
 
 describe("terminal editing chords and external file drop", () => {

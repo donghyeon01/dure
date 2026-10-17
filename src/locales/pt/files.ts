@@ -9,6 +9,8 @@ export const files: Record<string, string> = {
 		"Atualize o Hmux no servidor conectado para colar arquivos nesta sessão.",
 	"files.transfer.sessionChanged":
 		"A sessão ou conexão SSH mudou durante o envio. Cole o arquivo novamente.",
+	"files.transfer.processUnavailable":
+		"O computador estava ocupado demais para verificar o programa em execução neste terminal, então nada foi colado. Cole o arquivo novamente.",
 	"files.transfer.sshRouteUnsupported":
 		"As opções deste comando SSH não podem ser reutilizadas com segurança para colar arquivos. Abra o destino pela conexão SSH do Dure.",
 };

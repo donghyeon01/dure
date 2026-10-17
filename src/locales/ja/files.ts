@@ -9,6 +9,8 @@ export const files: Record<string, string> = {
 		"このセッションにファイルを貼り付けるには、接続先サーバーの Hmux を更新してください。",
 	"files.transfer.sessionChanged":
 		"アップロード中にセッションまたは SSH 接続が変わりました。ファイルをもう一度貼り付けてください。",
+	"files.transfer.processUnavailable":
+		"コンピューターが混み合っていて、このターミナルで実行中のプログラムを確認できなかったため、貼り付けませんでした。もう一度ファイルを貼り付けてください。",
 	"files.transfer.sshRouteUnsupported":
 		"この SSH コマンドのオプションは、ファイルの貼り付けで安全に再利用できません。Dure の SSH 接続で接続先を開いてください。",
 };

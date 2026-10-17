@@ -9,6 +9,8 @@ export const filesEnglishTranslations: Record<string, string> = {
 		"Update Hmux on the connected server to paste files into this session.",
 	"files.transfer.sessionChanged":
 		"The session or SSH connection changed during upload. Paste the file again.",
+	"files.transfer.processUnavailable":
+		"The computer was too busy to check this terminal’s running program, so nothing was pasted. Paste the file again.",
 	"files.transfer.sshRouteUnsupported":
 		"This SSH command uses options that file paste cannot safely reuse. Open the destination through Dure’s SSH connection.",
 };

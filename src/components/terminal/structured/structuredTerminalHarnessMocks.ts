@@ -37,6 +37,7 @@ export const mocks = {
 	routeSessionFiles: vi.fn(),
 	writeClipboard: vi.fn(async () => undefined),
 	showToast: vi.fn(),
+	showErrorToast: vi.fn(),
 	setHmuxSessionMetadata: vi.fn(),
 	setSessionAgent: vi.fn(),
 	setSessionAgentPin: vi.fn(),

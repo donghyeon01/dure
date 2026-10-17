@@ -15,10 +15,14 @@ import {
 	MouseTrackingMode,
 	PointerKind,
 } from "@/contracts/terminalStateProtocol";
-import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
+import {
+	type DroppedFilePayload,
+	describeExternalFileDropError,
+} from "@/lib/files/externalFileDrop";
 import { saveSessionFiles } from "@/lib/files/sessionFileTransfer";
 import { t } from "@/lib/i18n";
 import { useHubTerminalWidth } from "@/lib/hub/useHubTerminalWidth";
+import { showErrorToast } from "@/lib/toast";
 import { TerminalBoxCache } from "@/lib/terminal/geometry/terminalBoxCache";
 import { terminalDocumentResizePhase } from "@/lib/terminal/geometry/terminalDocumentResizeTransaction";
 import { terminalWindowFocusProbeForSurface } from "@/lib/terminal/qa/terminalWindowFocusProbeRegistry";
@@ -284,7 +288,6 @@ export function StructuredTerminalView({
 		requestViewportRows,
 		supportsCapability,
 		resolveResizeFailure,
-		reportFailure,
 	} = viewportTransport;
 	const issueViewportScrollRows = useCallback(
 		(rows: number) => {
@@ -696,6 +699,17 @@ export function StructuredTerminalView({
 			viewportReplica.terminalEpoch,
 		],
 	);
+	// A paste or drop that could not prepare its files leaves the attachment
+	// healthy, so it is reported in this pane rather than as a terminal failure.
+	const paneId = paneApi?.id;
+	const reportTransferFailure = useCallback(
+		(cause: unknown) => {
+			const message = describeExternalFileDropError(cause, t);
+			if (paneId) showErrorToast(message, { paneId });
+			else showErrorToast(message);
+		},
+		[paneId],
+	);
 	const { copyNativeSelection, onPaste, selectedText } =
 		useStructuredTerminalClipboard({
 			terminalSurfaceRef,
@@ -706,7 +720,7 @@ export function StructuredTerminalView({
 			currentAttachmentId: currentInputAttachmentId,
 			selectionText: selectionDrag.selectedText,
 			forwardUserInput: forwardPastedText,
-			reportFailure,
+			reportTransferFailure,
 		});
 	selectionCommitRef.current = copyNativeSelection;
 	const onTerminalKeyDown = useStructuredTerminalKeyInput({
@@ -726,7 +740,7 @@ export function StructuredTerminalView({
 		paneApi,
 		currentAttachmentId: currentInputAttachmentId,
 		forwardUserInput: forwardPastedText,
-		reportFailure,
+		reportTransferFailure,
 	});
 
 	const compositionCursor =

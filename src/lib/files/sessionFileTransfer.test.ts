@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { t } from "@/lib/i18n";
 import { useStore } from "@/store";
 import { saveSessionFiles } from "./sessionFileTransfer";
 
@@ -87,6 +88,18 @@ it("does not return staged paths when the SSH route cannot be established", asyn
 			terminalEpoch: "epoch",
 		}),
 	).rejects.toThrow("session_file_ssh_config_unavailable");
+});
+it("explains a busy process census instead of its internal error", async () => {
+	mocks.route.mockRejectedValue(
+		"session_file_process_unavailable: bounded process table sampling failed at process_exit",
+	);
+	await expect(
+		saveSessionFiles(undefined, files, {
+			sessionId: "shell",
+			workspaceId: "workspace",
+			terminalEpoch: "epoch",
+		}),
+	).rejects.toThrow(t("files.transfer.processUnavailable"));
 });
 it("pins uploaded bytes to the existing trusted SSH authority", async () => {
 	await expect(saveSessionFiles(host.id, files)).resolves.toEqual([

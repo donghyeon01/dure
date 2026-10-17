@@ -17,7 +17,8 @@ interface StructuredTerminalClipboardOptions {
 	readonly currentAttachmentId: () => string | undefined;
 	readonly selectionText?: () => string;
 	readonly forwardUserInput: (text: string) => void;
-	readonly reportFailure: (cause: unknown) => void;
+	/** A failed clipboard read or file preparation; the terminal is unaffected. */
+	readonly reportTransferFailure: (cause: unknown) => void;
 }
 
 /** Owns clipboard interactions while preserving the initiating attachment. */
@@ -81,7 +82,7 @@ export function useStructuredTerminalClipboard(
 				},
 				onError: (cause) => {
 					if (options.currentAttachmentId() === attachmentId) {
-						options.reportFailure(cause);
+						options.reportTransferFailure(cause);
 					}
 				},
 			})(event);

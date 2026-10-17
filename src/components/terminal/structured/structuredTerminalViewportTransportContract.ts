@@ -152,7 +152,6 @@ export interface StructuredTerminalViewportTransport {
 	readonly requestViewportRows: (rows: number) => bigint | undefined;
 	readonly supportsCapability: (capability: string) => boolean;
 	readonly resolveResizeFailure: (recordId: bigint) => void;
-	readonly reportFailure: (cause: unknown) => void;
 }
 
 export interface UseStructuredTerminalViewportTransportOptions {

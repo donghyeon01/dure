@@ -9,6 +9,8 @@ export const files: Record<string, string> = {
 		"Actualiza Hmux en el servidor conectado para pegar archivos en esta sesión.",
 	"files.transfer.sessionChanged":
 		"La sesión o la conexión SSH cambió durante la carga. Vuelve a pegar el archivo.",
+	"files.transfer.processUnavailable":
+		"El equipo estaba demasiado ocupado para comprobar el programa que se ejecuta en este terminal, así que no se pegó nada. Vuelve a pegar el archivo.",
 	"files.transfer.sshRouteUnsupported":
 		"Las opciones de este comando SSH no se pueden reutilizar de forma segura para pegar archivos. Abre el destino mediante la conexión SSH de Dure.",
 };
