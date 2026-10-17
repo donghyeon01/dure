@@ -578,10 +578,21 @@ function stage() {
     } catch (error) {
       if (!release(tag)) throw error;
     }
-    current = release(tag);
+    current = createdRelease(tag);
   }
   current = completeDraft(tag, directory, assets, proof, current);
   output({ tag, release_id: current.id, draft: true });
+}
+
+/** The authenticated listing can omit a draft for a moment after it is
+ * created. Observe it again, briefly, rather than staging into nothing. */
+function createdRelease(tag) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const current = release(tag);
+    if (current) return current;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
+  }
+  throw new Error("release_draft_not_observed");
 }
 
 function anonymous(url, file) {

@@ -75,6 +75,15 @@ test("refreshes an incomplete draft listing before verification, staging or publ
   expect(value.state().release.draft).toBe(false);
 });
 
+test("observes a just-created draft that the listing still omits", () => {
+  const value = fixture();
+  value.change({ draftByTagMissing: true, hiddenListings: 1 });
+  success(stage(value));
+  expect(value.state().hiddenListings).toBe(0);
+  expect(value.state().release.assets).toHaveLength(4);
+  expect(writes(value).filter((args) => args[1] === "create")).toHaveLength(1);
+}, 30_000);
+
 test.each([403, 404, 500])("refuses draft detail HTTP %s without writes", (status) => {
   const value = fixture();
   success(stage(value));

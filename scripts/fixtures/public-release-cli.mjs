@@ -49,7 +49,8 @@ if(argv[0]==='api'){
   }else if(route.startsWith('repos/hebbianai/dure/releases?')){
     if(state.releaseListError)fail(state.releaseListError);
     const page=Number(new URL('https://fixture/'+route).searchParams.get('page'));
-    answer(state.releasePages?.[page-1]??[...(state.release?[state.release]:[]),...(state.extraReleases??[])]);
+    if(state.release&&state.hiddenListings>0){state.hiddenListings--;answer([]);}
+    else answer(state.releasePages?.[page-1]??[...(state.release?[state.release]:[]),...(state.extraReleases??[])]);
   }else if(/^repos\/hebbianai\/dure\/releases\/\d+$/.test(route)){
     if(state.releaseDetailError)fail(state.releaseDetailError);
     if(Number(route.split('/').at(-1))!==state.release?.id)fail(404);
