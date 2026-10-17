@@ -52,6 +52,8 @@ mod webview_diagnostics;
 mod login_shell;
 mod login_identity;
 #[cfg(target_os = "macos")]
+mod app_bundle_location;
+#[cfg(target_os = "macos")]
 mod macos_dev_bundle;
 #[cfg(target_os = "macos")]
 mod macos_notification_bridge;
@@ -1516,6 +1518,10 @@ struct MacosPermissions {
     microphone: Option<bool>,
     camera: Option<bool>,
     bluetooth: Option<bool>,
+    /// The bundle macOS attributes these permissions to. Sessions started by
+    /// another copy of the app are checked against that copy instead.
+    app_bundle_path: Option<String>,
+    app_version: &'static str,
 }
 
 #[tauri::command]
@@ -1534,6 +1540,9 @@ fn macos_permissions() -> MacosPermissions {
             microphone: capture_authorization("soun"),
             camera: capture_authorization("vide"),
             bluetooth: bluetooth_authorization(),
+            app_bundle_path: app_bundle_location::running_app_bundle()
+                .map(|path| path.to_string_lossy().into_owned()),
+            app_version: env!("CARGO_PKG_VERSION"),
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -1545,6 +1554,8 @@ fn macos_permissions() -> MacosPermissions {
             microphone: None,
             camera: None,
             bluetooth: None,
+            app_bundle_path: None,
+            app_version: env!("CARGO_PKG_VERSION"),
         }
     }
 }
@@ -2128,6 +2139,16 @@ fn migrate_legacy_app_identity_data() {
 }
 
 pub fn run() {
+    // A retained backup copy must not claim the channel or republish shared
+    // integration files from its own bundle; the installed app owns them.
+    #[cfg(target_os = "macos")]
+    if let Some(executable) = app_bundle_location::running_retained_app_backup() {
+        eprintln!(
+            "[app-startup] retained_app_backup: {} is a retained backup copy; open the installed Dure app",
+            executable.display()
+        );
+        return;
+    }
     let mut context = tauri::generate_context!();
     worktree_release::apply(&mut context).expect("invalid worktree release profile");
     #[cfg(target_os = "macos")]

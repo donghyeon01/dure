@@ -113,7 +113,10 @@ open src-tauri/target/release/bundle/macos/Dure.app
 For a Finder installation, reveal the result with
 `open -R src-tauri/target/release/bundle/macos/Dure.app`, then copy it into
 `~/Applications` or `/Applications`. Check any replacement prompt if you already
-have Dure installed. This packaged app uses Dure's normal application identity
+have Dure installed. To keep the app you replace for a deliberate rollback, run
+`node scripts/retain-app-backup.mjs` first. It stores a `.app-backup` copy that
+macOS does not launch; any `.app` copy with Dure's identity can start and take
+over shared state. This packaged app uses Dure's normal application identity
 and data; changing its filename does not create a separate development channel.
 Use macOS's per-app approval if it asks to allow your local build, as described in
 [the installation guide](https://docs.dureai.dev/en/install).

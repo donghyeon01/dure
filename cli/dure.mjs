@@ -39,6 +39,12 @@ import {
   parseDiagnosticRequirements,
   supportsHmuxCapability,
 } from "./lib/runtime-diagnostics.mjs";
+import {
+  inspectRuntimeIdentity,
+  permissionAttributionHint,
+  readProcessTable,
+  readResponsibleProcessId,
+} from "./lib/app-bundle-identity.mjs";
 import { parsePlainInteractiveSsh } from "./lib/ssh-command.mjs";
 import { runBoundedCommand } from "./lib/bounded-command.mjs";
 import { captureLocalScreen, SessionCaptureError } from "./lib/local-session-read.mjs";
@@ -620,9 +626,18 @@ async function cmdDiagnostics(opts) {
     descriptorPath: join(APP_CONTROL_DIR, "server.json"),
   });
   const hmuxInspection = inspectHmuxCompatibility();
+  const runtimeIdentity = inspectRuntimeIdentity({
+    home: homedir(),
+    appProcessId: app.state === "running" ? app.processId : null,
+    sessionProcessId: process.pid,
+    responsibleProcessId: readResponsibleProcessId(process.pid),
+    controlDirectory: APP_CONTROL_DIR,
+    processes: readProcessTable(),
+  });
   const diagnosticReport = createDiagnosticReport({
     cli: identity,
     app,
+    runtimeIdentity,
     selectedChannel: APP_CHANNEL,
     hmux: {
       command: hmuxInspection.command,
@@ -3279,9 +3294,27 @@ function cmdSkills(reg, sub, opts) {
 // ---------- computer-use (macOS, osascript 기반 경량 데스크톱 제어) ----------
 // 접근성(손쉬운 사용) 권한 필요. 스크린샷은 화면 기록 권한 필요.
 
+// macOS checks a session's privacy access against the Dure copy that started
+// the session, which can differ from the app the user granted access to.
+function permissionAttribution() {
+  try {
+    const descriptor = loadAppControlDescriptor(APP_CONTROL_DIR);
+    const hint = permissionAttributionHint(inspectRuntimeIdentity({
+      home: homedir(),
+      appProcessId: Number.isSafeInteger(descriptor?.processId) ? descriptor.processId : null,
+      sessionProcessId: process.pid,
+      responsibleProcessId: readResponsibleProcessId(process.pid),
+      processes: readProcessTable(),
+    }));
+    return hint ? `\n${hint}` : "";
+  } catch {
+    return "";
+  }
+}
+
 function osa(script) {
   const r = spawnSync("osascript", ["-e", script], { encoding: "utf8", timeout: 15000 });
-  if (r.status !== 0) fail((r.stderr || "osascript failed").trim() + "\n(Accessibility permission may be required: System Settings > Privacy & Security > Accessibility)");
+  if (r.status !== 0) fail((r.stderr || "osascript failed").trim() + "\n(Accessibility permission may be required: System Settings > Privacy & Security > Accessibility)" + permissionAttribution());
   return r.stdout.trim();
 }
 
@@ -3314,7 +3347,14 @@ async function cmdComputer(opts) {
     case "type":
     case "key": {
       const { runMacComputerInput } = await import("./lib/macos-computer-input.mjs");
-      const receipt = runMacComputerInput(opts);
+      let receipt;
+      try {
+        receipt = runMacComputerInput(opts);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/permission/i.test(message)) throw error;
+        fail(message + permissionAttribution());
+      }
       const action = sub === "activate" ? "Activated" : `Dispatched ${receipt.focusMode} input to`;
       process.stdout.write(`${action} ${app ?? "app"} (PID ${receipt.pid})\n`);
       return;
@@ -3331,7 +3371,7 @@ async function cmdComputer(opts) {
       const path = opts.path ?? join(APP_CONTROL_DIR, `screenshot-${nowMs()}.png`);
       // A literal path after -- must not become a screencapture option.
       const r = spawnSync("screencapture", ["-x", resolvePath(path)], { encoding: "utf8" });
-      if (r.status !== 0) fail("screencapture failed (Screen Recording permission may be required).");
+      if (r.status !== 0) fail("screencapture failed (Screen Recording permission may be required)." + permissionAttribution());
       process.stdout.write(path + "\n");
       return;
     }

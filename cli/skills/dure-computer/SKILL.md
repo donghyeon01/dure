@@ -15,6 +15,14 @@ macOS normally attributes these permissions to **the app hosting your shell**
 — Dure, Terminal, iTerm. Grant access in System Settings; the CLI cannot grant
 it for you.
 
+In a Dure session that app is the Dure copy that started the session, which is
+not always the installed app. A permission failure names that copy's bundle. If
+it is a retained backup or another copy, granting access to the installed app
+or restarting it changes nothing for this session, so do not ask the user to
+toggle the installed entry again: report the named path, leave the session
+running, and use a session started from the installed app for desktop control.
+`dure diagnostics` lists the app, this session and every other live copy.
+
 - **Accessibility** is required by the native events in `type` and `key`, and
   the System Events work in `menu` and `state`'s window query. Name lookup and
   System Events commands may also need Automation consent. `activate` selects an

@@ -332,6 +332,7 @@ export const settings: Record<string, string> = {
 	"settings.storage.cliInstall.name": "Installation CLI",
 	"settings.macosPerms.camera.desc": "Capture webcam en CLI et applications de test local basées sur la caméra",
 	"settings.macosPerms.footnote": "Vérifiez ici lorsque des CLI, applications locales ou outils d'automatisation ont besoin d'un accès à la confidentialité macOS. L'accessibilité, l'enregistrement d'écran et le disque complet affichent un état en temps réel ; vérifiez le reste directement dans les réglages système.",
+	"settings.macosPerms.appIdentity": "Ces autorisations appartiennent à {path} (Dure {version}). Une session lancée par une autre copie de Dure est vérifiée par rapport à cette copie ; exécutez dure diagnostics dans la session pour savoir laquelle.",
 	"settings.appearance.resourceMonitor.desc": "Affiche le CPU, la mémoire, les sessions et l’espace disque disponible dans la barre supérieure. Désactivé par défaut.",
 	"settings.agentTooling.hook.claudeSessionStart": "Hook SessionStart de Claude Code (discipline de checkpoint)",
 	"settings.stats.usage.autoAggregateHint": "L'utilisation des tokens est agrégée automatiquement à partir des journaux de session locaux lorsque vous travaillez avec Claude Code / Codex.",

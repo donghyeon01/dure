@@ -371,6 +371,9 @@ export interface MacosPermissions {
 	microphone: boolean | null;
 	camera: boolean | null;
 	bluetooth: boolean | null;
+	/** The bundle macOS attributes these permissions to; older apps omit it. */
+	app_bundle_path?: string | null;
+	app_version?: string;
 }
 
 export const macosPermissions = () =>

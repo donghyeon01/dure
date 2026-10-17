@@ -13,6 +13,7 @@ import {
   join,
   resolve,
 } from "node:path";
+import { runtimeIdentityFindings } from "./app-bundle-identity.mjs";
 import { comparePackageVersions } from "./package-version.mjs";
 import { resolveChannelCommand } from "./dure-cli-channel-launcher.mjs";
 import { parseWebviewDiagnostics } from "./contracts/webview-diagnostics.mjs";
@@ -466,8 +467,16 @@ function cliFreshness(cli, app) {
   return { state: order < 0 ? "older" : order > 0 ? "newer" : "current", comparedTo: app.packageVersion };
 }
 
-export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.channel ?? null, now = Date.now() }) {
+export function createDiagnosticReport({
+  cli,
+  app,
+  hmux,
+  runtimeIdentity = null,
+  selectedChannel = app.channel ?? null,
+  now = Date.now(),
+}) {
   const issues = [];
+  const identity = runtimeIdentityFindings(runtimeIdentity);
   const freshness = cliFreshness(cli, app);
   if (freshness.state === "older") issues.push("cli_older_than_app");
   if (!cli.pathMatchesCurrent) issues.push("cli_path_mismatch");
@@ -479,6 +488,7 @@ export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.c
     issues.push(`app_${String(app.compatibility.mode).replaceAll("-", "_")}`);
   }
   if (!hmux.compatible) issues.push("hmux_incompatible");
+  issues.push(...identity.issues);
   return {
     schemaVersion: 1,
     generatedAtMs: now,
@@ -487,6 +497,7 @@ export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.c
     cli: { ...cli, freshness },
     app,
     hmux,
+    ...(runtimeIdentity ? { runtimeIdentity } : {}),
     selectedChannel,
     recovery: {
       backendHealth: "not_inspected",
@@ -500,6 +511,9 @@ export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.c
             ? [`Verified channel launcher: ${cli.channelLauncher.path} (package ${cli.channelLauncher.packageVersion}).`]
             : []),
         ] : []),
+        // Which Dure copy owns the app, this session and other live process
+        // trees comes before any advice to reopen or restart the app.
+        ...identity.steps,
         "An unreachable app is not proof that sessions exited. Hmux compatibility checks the executable, not live session health.",
         "Keep the same Dure executable, app channel and backend selection for these read-only checks. Inspect the affected session with dure inspect <session-id> --workspace <workspace-id> --json.",
         ...(app.state !== "running" ? [
@@ -562,6 +576,36 @@ export function formatVersion(identity) {
   return `dure ${identity.packageVersion}${build}`;
 }
 
+function bundleLine(bundle) {
+  return `${label(bundle.bundlePath)} (${label(bundle.version)}) [${label(bundle.location)}]`;
+}
+
+function formatRuntimeIdentity(identity) {
+  if (!identity) return [];
+  if (identity.state === "unsupported_platform") return ["runtime_identity:", "  state: unsupported_platform"];
+  const backups = identity.retainedBackups;
+  return [
+    "runtime_identity:",
+    `  state: ${label(identity.state)}`,
+    `  current_bundle: ${label(identity.currentBundlePath)}`,
+    `  app_bundle: ${identity.app ? `${bundleLine(identity.app)} pid ${identity.app.processId}` : "unknown"}`,
+    `  session_bundle: ${identity.session
+      ? `${bundleLine(identity.session)} via ${label(identity.session.role)} pid ${identity.session.processId} (${label(identity.session.attribution)})`
+      : "none"}`,
+    ...(identity.otherBundles ?? []).flatMap((group) => [
+      `  other_bundle: ${bundleLine(group)}`,
+      ...group.processes.map((entry) =>
+        `    - pid ${entry.processId} ${label(entry.role)}: ${entry.descendantCount} descendants${
+          entry.descendantCommands.length > 0 ? ` (${entry.descendantCommands.map(label).join(", ")})` : ""}`),
+    ]),
+    ...(identity.integrationFiles ?? []).map((file) => `  integration_file: ${label(file.name)} -> ${
+      file.bundlePath ? `${label(file.bundlePath)} [${label(file.location)}]${file.exists ? "" : " (missing)"}` : "no app bundle"}`),
+    `  retained_backups: ${label(backups?.root)} (${label(backups?.state)})`,
+    ...(backups?.entries ?? []).map((entry) => `    - ${label(entry.name)}: ${label(entry.state)}${
+      entry.processIds.length > 0 ? ` pids ${entry.processIds.join(",")}` : ""}`),
+  ];
+}
+
 export function formatDiagnosticReport(report) {
   const compatibility = report.app.compatibility;
   const webview = report.app.webviewDiagnostics;
@@ -602,6 +646,7 @@ export function formatDiagnosticReport(report) {
     `  command: ${label(report.hmux.command)}`,
     `  version: ${label(report.hmux.version)}`,
     `  compatible: ${label(report.hmux.compatible)}`,
+    ...formatRuntimeIdentity(report.runtimeIdentity),
     ...checkLines,
     "issues:",
     ...(report.issues.length === 0

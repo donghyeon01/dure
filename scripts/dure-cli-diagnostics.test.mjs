@@ -620,6 +620,95 @@ fi
     );
   });
 
+  it.skipIf(process.platform !== "darwin")("reports which Dure copy started this session", () => {
+    const home = temporaryDirectory("dure-cli-identity-");
+    const backup = path.join(
+      home, "Library", "Application Support", "Dure", "App Backups", "Dure-0.2.39-test.app",
+    );
+    fs.mkdirSync(path.join(backup, "Contents"), { recursive: true });
+    fs.writeFileSync(
+      path.join(backup, "Contents", "Info.plist"),
+      "<plist><dict><key>CFBundleIdentifier</key><string>io.hebbian.ade</string>" +
+        "<key>CFBundleShortVersionString</key><string>0.2.39</string></dict></plist>\n",
+    );
+    // This CLI runs under a Hmux host reparented to launchd; macOS holds the
+    // backup app (pid 7000) that started the host responsible for it.
+    const preload = path.join(home, "process-table.cjs");
+    fs.writeFileSync(preload, `
+const cp = require("node:child_process");
+const original = cp.spawnSync;
+const backup = ${JSON.stringify(backup)};
+cp.spawnSync = (command, args, options) => {
+  if (command === "/bin/ps") return { status: 0, stderr: "", stdout: process.pid +
+    " 4242 node dure.mjs\\n4242 1 /fixture/hmux/bin/hmux-runtime internal-hmux-host\\n7000 1 " + backup + "/Contents/MacOS/dure\\n" };
+  if (command === "/usr/bin/osascript") return { status: 0, stderr: "", stdout: "7000\\n" };
+  return original(command, args, options);
+};
+require("node:module").syncBuiltinESMExports();
+`);
+    // The backup's startup left the shared Claude hook pointing into it.
+    fs.mkdirSync(path.join(home, ".dure"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".dure", "managed-claude-hook-v2.sh"),
+      `#!/bin/sh\nexec '${backup}/Contents/Resources/resources/dure-cli/versions/0.2.39+x/bin/dure-control-plane' managed-claude-hook\n`,
+    );
+    const hmux = path.join(home, "hmux");
+    fs.writeFileSync(
+      hmux,
+      `#!/bin/sh
+if [ "$1" = "capabilities" ]; then
+  printf '%s\\n' '{"schemaVersion":1,"capabilities":["bounded_screen_read_v1"]}'
+elif [ "$1" = "--version" ]; then
+  printf '%s\\n' 'hmux 0.1.4'
+fi
+`,
+      { mode: 0o755 },
+    );
+    const environment = scriptTestEnvironment({ HOME: home, DURE_HMUX_BIN: hmux });
+    const diagnostics = (...args) => spawnSync(
+      process.execPath,
+      ["--require", preload, "cli/dure.mjs", "diagnostics", ...args],
+      { cwd: process.cwd(), env: environment, encoding: "utf8" },
+    );
+
+    const json = diagnostics("--json");
+    expect(json.status, json.stderr).toBe(0);
+    const report = JSON.parse(json.stdout);
+    expect(report.issues).toEqual(expect.arrayContaining([
+      "session_runtime_not_current",
+      "runtime_processes_not_current",
+      "integration_files_not_current",
+      "retained_app_backup_launchable",
+    ]));
+    expect(report.runtimeIdentity.integrationFiles).toEqual([expect.objectContaining({
+      name: "managed-claude-hook-v2.sh",
+      bundlePath: backup,
+      location: "retained_backup",
+      exists: true,
+    })]);
+    expect(report.runtimeIdentity).toMatchObject({
+      state: "available",
+      app: null,
+      session: {
+        processId: 7000,
+        role: "app",
+        attribution: "responsible_process",
+        bundlePath: backup,
+        version: "0.2.39",
+        location: "retained_backup",
+      },
+      retainedBackups: { entries: [{ name: "Dure-0.2.39-test.app", state: "in_use", processIds: [7000] }] },
+    });
+    expect(report.recovery.steps.join("\n")).toContain(
+      "granting them to the installed app or restarting the app does not change it",
+    );
+    const text = diagnostics();
+    expect(text.status, text.stderr).toBe(0);
+    expect(text.stdout).toContain(
+      `  session_bundle: ${backup} (0.2.39) [retained_backup] via app pid 7000 (responsible_process)`,
+    );
+  });
+
   it("uses explicit requirements for a machine-readable strict exit status", () => {
     const home = temporaryDirectory("dure-cli-check-");
     const hmux = path.join(home, "hmux");

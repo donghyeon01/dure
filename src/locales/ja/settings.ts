@@ -332,6 +332,7 @@ export const settings: Record<string, string> = {
 	"settings.storage.cliInstall.name": "CLI インストール",
 	"settings.macosPerms.camera.desc": "CLI のウェブカメラキャプチャおよびカメラを使ったローカルテストアプリ",
 	"settings.macosPerms.footnote": "CLI・ローカルアプリ・自動化ツールが macOS のプライバシーアクセスを必要とする場合はここで確認してください。アクセシビリティ・画面収録・フルディスクはリアルタイムの状態を表示し、それ以外はシステム設定で直接確認してください。",
+	"settings.macosPerms.appIdentity": "これらの権限は {path}（Dure {version}）に属します。別の Dure のコピーが開始したセッションは、そのコピーに対して確認されます。どのコピーかはセッション内で dure diagnostics を実行して確認してください。",
 	"settings.appearance.resourceMonitor.desc": "上部バーに CPU・メモリ・セッション数・ディスクの空き容量を表示します。初期設定ではオフです。",
 	"settings.agentTooling.hook.claudeSessionStart": "Claude Code SessionStart フック（チェックポイント規律）",
 	"settings.stats.usage.autoAggregateHint": "Claude Code・Codex で作業すると、ローカルのセッションログからトークン使用量が自動で集計されます。",

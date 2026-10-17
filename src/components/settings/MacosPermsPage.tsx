@@ -93,6 +93,15 @@ export function MacosPermsPage() {
             <span className="text-xs text-muted-foreground">
               {t("settings.macosPerms.footnote")}
             </span>
+            {perms?.app_bundle_path ? (
+              // TCC 프롬프트가 이름 대는 경로와 대조할 수 있게 실제 번들을 보인다.
+              <span className="break-all text-xs text-muted-foreground" data-selectable>
+                {t("settings.macosPerms.appIdentity", {
+                  path: perms.app_bundle_path,
+                  version: perms.app_version ?? "?",
+                })}
+              </span>
+            ) : null}
           </div>
           <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={load}>
             <RefreshCw className="size-3" /> {t("common.refresh")}

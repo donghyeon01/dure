@@ -87,6 +87,7 @@
   "cli/lib/dure-cli-channel-launcher.mjs",
   "cli/lib/local-backend-executable-identity.mjs",
   "cli/lib/runtime-diagnostics.mjs",
+  "cli/lib/app-bundle-identity.mjs",
   "cli/lib/package-version.mjs",
   "cli/lib/contracts/webview-diagnostics.mjs",
   "cli/lib/app-control-location.mjs"

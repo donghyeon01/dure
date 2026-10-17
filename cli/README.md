@@ -32,6 +32,15 @@ backend build with an older one. Open the current Dure app if it reports
 `automatic Dure CLI downgrade refused`. Explicit CLI installation retains its
 existing replacement behavior. Already shipped older apps may predate this guard.
 
+A copy of the app retained under `~/Library/Application Support/Dure/App Backups`
+refuses to start, and its bundled bootstrap refuses to publish shared files.
+On startup the installed app renames idle `.app` copies there to
+`<name>.app-backup`, so LaunchServices no longer launches them; a copy that still
+runs processes keeps its name until they exit, and nothing is deleted.
+`dure diagnostics` names the bundle behind the app, the current session, any
+other live process trees and the shared hook scripts, and `dure computer`
+permission failures name the copy macOS checks for the session.
+
 Read-only inspection, runtime mutation and connected-client presentation have
 different effects. A delivery receipt does not prove provider acceptance or
 task completion, and a timeout does not prove that an operation stopped. Inspect

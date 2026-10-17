@@ -105,9 +105,10 @@ fn main() {
   return executable;
 }
 
-function packageFixture({ olderManagedInstall = false } = {}) {
+function packageFixture({ olderManagedInstall = false, appBundleInHome = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-package-"));
   roots.push(root);
+  const home = path.join(root, "clean-home");
   const repository = createDureCliInstallerFixture(root);
   const resources = path.join(root, "build-resources");
   const bundle = path.join(resources, "resources", "dure-cli");
@@ -135,7 +136,9 @@ function packageFixture({ olderManagedInstall = false } = {}) {
   execFileSync(process.execPath, ["scripts/install-dure-cli.mjs", "--bundle", bundle], {
     cwd: repository, env: buildEnvironment, stdio: "pipe", timeout: 30_000,
   });
-  const installedResources = path.join(root, "Dure with spaces.app", "Contents", "Resources");
+  const installedResources = appBundleInHome
+    ? path.join(home, appBundleInHome, "Contents", "Resources")
+    : path.join(root, "Dure with spaces.app", "Contents", "Resources");
   fs.mkdirSync(path.dirname(installedResources), { recursive: true });
   const configuration = JSON.parse(fs.readFileSync("src-tauri/tauri.macos.conf.json", "utf8"));
   // Match Tauri's macOS copy_dir: preserve symlinks and executable modes,
@@ -147,8 +150,7 @@ function packageFixture({ olderManagedInstall = false } = {}) {
   }
   fs.rmSync(resources, { recursive: true });
   let startup;
-  const home = path.join(root, "clean-home");
-  fs.mkdirSync(home);
+  fs.mkdirSync(home, { recursive: true });
   let oldVersion;
   if (olderManagedInstall) {
     const legacyTools = path.join(home, "legacy-tools");
@@ -312,6 +314,44 @@ macosTest("advances an older managed stable install to the shipped payload and p
   });
   expect(version.status, version.stderr).toBe(0);
   expect(JSON.parse(version.stdout).buildId).toBe(path.basename(path.dirname(path.dirname(cli))));
+}, 60_000);
+
+macosTest("refuses to publish the shared CLI from a retained app backup copy", () => {
+  const backup = path.join("Library", "Application Support", "Dure", "App Backups", "Dure-0.2.39-test.app");
+  const { home, environment, installedResources } = packageFixture({ appBundleInHome: backup });
+  const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
+  const result = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
+    env: environment, encoding: "utf8", timeout: 15_000,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("refusing to publish shared Dure integration files from a retained app backup");
+  // No CLI install, launcher or command link was written for the shared home.
+  expect(fs.readdirSync(home)).toEqual(["Library"]);
+}, 60_000);
+
+macosTest("startup from the installed bundle reports retained backups without touching inert ones", () => {
+  const { home, environment, installedResources } = packageFixture();
+  const backups = path.join(home, "Library", "Application Support", "Dure", "App Backups");
+  const inert = path.join(backups, "Dure-0.2.38-test.app-backup");
+  const other = path.join(backups, "Other.app");
+  for (const [bundle, identifier] of [[inert, "io.hebbian.ade"], [other, "com.example.other"]]) {
+    fs.mkdirSync(path.join(bundle, "Contents"), { recursive: true });
+    fs.writeFileSync(
+      path.join(bundle, "Contents", "Info.plist"),
+      `<plist><dict><key>CFBundleIdentifier</key><string>${identifier}</string></dict></plist>\n`,
+    );
+  }
+  const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
+  const result = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
+    env: environment, encoding: "utf8", timeout: 15_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    buildId: expect.any(String),
+    retainedAppBackups: { state: "present", entries: [{ name: "Dure-0.2.38-test.app-backup", state: "inert" }] },
+  });
+  expect(fs.existsSync(path.join(home, ".local", "share", "hebbian-ide-cli", "current"))).toBe(true);
+  expect(fs.readdirSync(backups).sort()).toEqual(["Dure-0.2.38-test.app-backup", "Other.app"]);
 }, 60_000);
 
 macosTest("refuses to replace an incomplete existing installation", () => {

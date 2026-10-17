@@ -71,6 +71,29 @@ describe("MacosPermsPage", () => {
 		expect(screen.getAllByText("수동 확인").length).toBe(9);
 	});
 
+	// TCC 프롬프트가 이름 대는 경로와 대조할 수 있도록 권한이 붙는 실제 번들을 보인다.
+	it("권한이 속한 앱 번들 경로와 버전을 보인다", async () => {
+		macosPermissions.mockResolvedValue({
+			...PERMS,
+			app_bundle_path: "/Applications/Dure.app",
+			app_version: "0.2.49",
+		});
+		const { container } = render(<MacosPermsPage />);
+		const identity = await screen.findByText((text) =>
+			text.includes("/Applications/Dure.app (Dure 0.2.49)"),
+		);
+		expect(identity.textContent).toContain("dure diagnostics");
+		expect(identity.hasAttribute("data-selectable")).toBe(true);
+		expect(container.querySelectorAll("[data-selectable]")).toHaveLength(1);
+	});
+
+	it("번들 경로를 모르는 이전 백엔드에서는 신원 줄을 그리지 않는다", async () => {
+		macosPermissions.mockResolvedValue(PERMS);
+		const { container } = render(<MacosPermsPage />);
+		await waitFor(() => expect(screen.getByText("마이크")).toBeTruthy());
+		expect(container.querySelectorAll("[data-selectable]")).toHaveLength(0);
+	});
+
 	it("새로고침을 누르면 권한을 다시 조회한다", async () => {
 		macosPermissions.mockResolvedValue(PERMS);
 		render(<MacosPermsPage />);

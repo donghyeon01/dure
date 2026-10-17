@@ -25,6 +25,15 @@ const fs = require("node:fs");
 const fixture = ${JSON.stringify(fixture)};
 Object.defineProperty(process, "platform", { value: "darwin" });
 cp.spawnSync = (command, args) => {
+  if (command === "/bin/ps" && fixture.sessionBundle) {
+    // The Hmux host runs from its own install and is reparented to launchd;
+    // only the responsible app (pid 7000) runs from the fixture bundle.
+    const bundle = require("node:path").join(process.env.HOME, fixture.sessionBundle);
+    return { status: 0, stderr: "", stdout: process.pid + " 4242 node dure.mjs\\n4242 1 /fixture/hmux/bin/hmux-runtime internal-hmux-host\\n7000 1 " + bundle + "/Contents/MacOS/dure\\n" };
+  }
+  if (command === "/usr/bin/osascript" && fixture.sessionBundle) {
+    return { status: 0, stderr: "", stdout: "7000\\n" };
+  }
   if (command !== "osascript" && command !== "screencapture") {
     throw new Error("Unexpected child process: " + command);
   }
@@ -244,6 +253,21 @@ describe("dure computer input", () => {
     const result = run(["computer", "type", "--pid", "42", "blocked"], { postAccess: false });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Accessibility permission");
+    expect(result.inputs.some(({ kind }) => kind === "posted")).toBe(false);
+  });
+
+  it("names the Dure copy macOS checks when this session's input permission is denied", () => {
+    const result = run(["computer", "type", "--pid", "42", "blocked"], {
+      postAccess: false,
+      sessionBundle: "Library/Application Support/Dure/App Backups/Dure-0.2.39-test.app",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Accessibility permission");
+    expect(result.stderr).toMatch(
+      /macOS checks this permission against the Dure copy that started this session: \/.*\/App Backups\/Dure-0\.2\.39-test\.app \(unknown version\)\./,
+    );
+    expect(result.stderr).toContain("That copy is a retained backup, not the installed app");
+    expect(result.stderr).toContain("start a new session from the installed app");
     expect(result.inputs.some(({ kind }) => kind === "posted")).toBe(false);
   });
 
