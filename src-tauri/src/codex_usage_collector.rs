@@ -381,6 +381,11 @@ async fn probe_profile(
         // releases, so coupling the collector to them makes upgrades fail
         // before initialize can run.
         .arg("app-server")
+        // A probe lives a few seconds. With plugins on, App Server starts a
+        // marketplace upgrade at launch that the probe's stop interrupts,
+        // leaving its staging copy in CODEX_HOME every poll. Codex ignores an
+        // unrecognized feature override, so older releases still start.
+        .args(["-c", "features.plugins=false"])
         .current_dir(home)
         .env_clear()
         .envs(
@@ -735,7 +740,7 @@ mod tests {
         script
             .write_all(
                 br#"#!/bin/sh
-[ "$#" -eq 1 ] && [ "$1" = "app-server" ] || exit 64
+[ "$#" -eq 3 ] && [ "$1" = "app-server" ] && [ "$2" = "-c" ] && [ "$3" = "features.plugins=false" ] || exit 64
 IFS= read -r initialize || exit 65
 printf '%s\n' '{"id":1,"result":{}}'
 IFS= read -r initialized || exit 66

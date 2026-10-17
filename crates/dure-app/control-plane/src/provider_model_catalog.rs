@@ -109,7 +109,10 @@ pub(crate) async fn read(body: Value) -> Result<Value, BackendDispatchError> {
     }
     command.envs(environment.values());
     if request.provider_id == "codex" {
-        command.arg("app-server");
+        // A catalog read is short-lived; plugins would start a marketplace
+        // upgrade that the read's exit interrupts and leaves staged in
+        // CODEX_HOME. Codex ignores the override if it lacks the feature.
+        command.args(["app-server", "-c", "features.plugins=false"]);
     } else if request.provider_id == "opencode" {
         command.args(["models", "--verbose"]);
     } else {
