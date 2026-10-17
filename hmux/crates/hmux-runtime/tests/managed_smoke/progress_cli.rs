@@ -156,7 +156,7 @@ fn list_and_inspect_preserve_the_same_host_progress() {
     );
     assert!(dure(&["ls"]).contains("thinking"));
 
-    ManagedSessionStopper::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+    ManagedSessionStopper::new(env!("CARGO_BIN_EXE_hmux-runtime"), state.path())
         .with_discovery_root(&discovery)
         .stop(exact_managed_stop_request(
             "stop-progress-list",
