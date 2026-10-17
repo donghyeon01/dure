@@ -49,12 +49,15 @@ function semanticInputReceipt(
 	};
 }
 
+/** A draft-guarded request must come back as one atomic Host record; an
+ * ordinary request keeps its separate text-then-submit records. */
 export function parseHmuxCommandInputReceipt(
 	value: unknown,
 	expected: {
 		terminalEpoch?: string;
 		text: boolean;
 		submit: boolean;
+		atomic?: boolean;
 	},
 ): HmuxCommandInputReceipt {
 	if (!value || typeof value !== "object") {
@@ -63,6 +66,7 @@ export function parseHmuxCommandInputReceipt(
 	const receipt = value as Record<string, unknown>;
 	const text = semanticInputReceipt(receipt.text);
 	const submit = semanticInputReceipt(receipt.submit);
+	const atomic = expected.atomic === true;
 	if (
 		typeof receipt.terminalEpoch !== "string" ||
 		!receipt.terminalEpoch ||
@@ -70,9 +74,15 @@ export function parseHmuxCommandInputReceipt(
 			receipt.terminalEpoch !== expected.terminalEpoch) ||
 		Boolean(text) !== expected.text ||
 		Boolean(submit) !== expected.submit ||
+		(atomic ? receipt.atomic !== true : receipt.atomic !== undefined) ||
 		(text &&
 			submit &&
-			!isImmediateCanonicalDecimalSuccessor(submit.recordId, text.recordId))
+			(atomic
+				? submit.recordId !== text.recordId
+				: !isImmediateCanonicalDecimalSuccessor(
+						submit.recordId,
+						text.recordId,
+					)))
 	) {
 		invalidReceipt("input_receipt_invalid");
 	}
@@ -80,6 +90,7 @@ export function parseHmuxCommandInputReceipt(
 		terminalEpoch: receipt.terminalEpoch,
 		...(text ? { text } : {}),
 		...(submit ? { submit } : {}),
+		...(atomic ? { atomic: true as const } : {}),
 	};
 }
 

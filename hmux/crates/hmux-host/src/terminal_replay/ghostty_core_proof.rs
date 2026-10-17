@@ -1299,6 +1299,29 @@ impl TerminalCore for GhosttyProofAdapter {
                 bytes.extend_from_slice(&submit);
                 Ok(bytes)
             }
+            input_intent::Intent::DraftGuarded(guarded) => {
+                std::str::from_utf8(&guarded.utf8)
+                    .map_err(|_| TerminalReplayError::InvalidStructuredInput)?;
+                // Body and submit share one mode-aware payload so the Host
+                // writes them as a single serialized PTY transaction.
+                let mut bytes = if guarded.utf8.is_empty() {
+                    Vec::new()
+                } else {
+                    self.core
+                        .encode_paste(&guarded.utf8)
+                        .map_err(|error| engine_error("encode draft-guarded input", error.0))?
+                };
+                if guarded.submit {
+                    let submit = self
+                        .core
+                        .encode_key(key_text("Enter"), "Enter", 0, false)
+                        .map_err(|error| {
+                            engine_error("encode draft-guarded input submit", error.0)
+                        })?;
+                    bytes.extend_from_slice(&submit);
+                }
+                Ok(bytes)
+            }
             input_intent::Intent::Key(key) => {
                 let utf8 = key_text(&key.key);
                 // A sender without a physical code (software keyboards) still
@@ -1529,6 +1552,46 @@ fn agent_prompt_encoding_is_one_mode_aware_body_plus_submit_payload() {
                         FreshAgentPromptTarget {},
                     )),
                 })),
+            })
+            .unwrap();
+        assert_eq!(encoded, expected);
+    }
+}
+
+#[test]
+fn draft_guarded_input_encodes_body_and_optional_submit_as_one_payload() {
+    use terminal_state_protocol::{DraftGuardedInputIntent, InputIntent, input_intent};
+
+    for (bracketed_paste, utf8, submit, expected) in [
+        (false, &b"report"[..], true, &b"report\r"[..]),
+        (
+            true,
+            &b"report"[..],
+            true,
+            &b"\x1b[200~report\x1b[201~\r"[..],
+        ),
+        (
+            true,
+            &b"report"[..],
+            false,
+            &b"\x1b[200~report\x1b[201~"[..],
+        ),
+        (true, &b""[..], true, &b"\r"[..]),
+    ] {
+        let mut actor = ProofActor::new(24, 80, 4096);
+        if bracketed_paste {
+            actor.ingest(b"\x1b[?2004h");
+        }
+        let encoded = actor
+            .terminal
+            .encode_input(&InputIntent {
+                intent: Some(input_intent::Intent::DraftGuarded(
+                    DraftGuardedInputIntent {
+                        utf8: utf8.to_vec(),
+                        submit,
+                        admission_wait_ms: 0,
+                    },
+                )),
             })
             .unwrap();
         assert_eq!(encoded, expected);

@@ -12,6 +12,8 @@ Options:
   --stdin                Read exact UTF-8 text from stdin until EOF (up to 64 KiB)
   --workspace ID         Exact local managed Session scope, independent of the app registry
   --no-enter             Insert text without submitting; edit the chat draft
+  --draft-wait SECONDS   Wait up to SECONDS (0-60, default 30) for unsubmitted user input to clear
+  --ignore-draft         Write even while the terminal holds unsubmitted user input
   --track                Send through the durable inbox; retain a private message tracking file
   --json                 Print the delivery receipt as JSON, without prompt text
   --window-label LABEL   Select the app window for input delivery
@@ -25,6 +27,12 @@ Use --workspace to disambiguate. Remote input requires a registered Agent.
 Messages after the recipient may include literal --help or -h text.
 Choose exactly one text source. Newlines and whitespace in file/stdin are preserved.
 Enter is sent by default; use --no-enter to insert without submitting.
+Terminal input never merges into text the user has typed but not submitted: text and
+Enter are one Host transaction, written only while the target has no such draft. A send
+waits up to --draft-wait for the user to submit; if the draft remains it fails with
+hmux_input_draft_pending and nothing written. Retry later or use --track. A target whose
+runtime cannot guard drafts fails with hmux_input_draft_guard_unavailable; --ignore-draft
+writes without the guard.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
 Tracked send cannot be combined with --no-enter or --idempotency-key.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
@@ -63,6 +71,43 @@ function extractSource(args) {
   return { source, remaining };
 }
 
+const DEFAULT_DRAFT_WAIT_SECONDS = 30;
+const MAX_DRAFT_WAIT_SECONDS = 60;
+
+/** Draft-guard options precede `--` like the other send flags. The guard is
+ * on by default; only an explicit --ignore-draft writes unguarded input. */
+function extractDraftGuard(args) {
+  const remaining = [];
+  let waitSeconds;
+  let ignore = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") {
+      remaining.push(...args.slice(index));
+      break;
+    }
+    if (argument === "--ignore-draft") {
+      ignore = true;
+      continue;
+    }
+    if (argument === "--draft-wait") {
+      const value = args[++index];
+      if (value === undefined || !/^(0|[1-9][0-9]*)$/.test(value) || Number(value) > MAX_DRAFT_WAIT_SECONDS) {
+        throw new Error(`--draft-wait requires whole seconds from 0 to ${MAX_DRAFT_WAIT_SECONDS}`);
+      }
+      waitSeconds = Number(value);
+      continue;
+    }
+    remaining.push(argument);
+  }
+  if (ignore && waitSeconds !== undefined) throw new Error("Choose either --draft-wait or --ignore-draft");
+  return {
+    remaining,
+    explicit: ignore || waitSeconds !== undefined,
+    draftGuard: ignore ? null : { waitMs: (waitSeconds ?? DEFAULT_DRAFT_WAIT_SECONDS) * 1000 },
+  };
+}
+
 function printDelivery(agent, input, opts) {
   if (opts.json) {
     process.stdout.write(`${JSON.stringify({
@@ -82,7 +127,8 @@ function printDelivery(agent, input, opts) {
   }
   const recordId = input?.receipt?.submit?.recordId ?? input?.receipt?.text?.recordId;
   const receipt = recordId ? ` · receipt ${recordId}` : "";
-  process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${receipt} · provider acceptance unconfirmed\n`);
+  const guarded = input?.receipt?.atomic === true ? " (one draft-guarded write)" : "";
+  process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${guarded}${receipt} · provider acceptance unconfirmed\n`);
 }
 
 export async function runSendCommand(
@@ -94,16 +140,21 @@ export async function runSendCommand(
     return;
   }
   let parsed;
+  let guard;
   try {
     parsed = extractSource(args);
+    guard = extractDraftGuard(parsed.remaining);
   } catch (error) {
     return fail(error.message);
   }
-  const { source, remaining } = parsed;
+  const { source } = parsed;
+  const remaining = guard.remaining;
   const terminator = remaining.indexOf("--");
   const track = remaining.some((arg, index) => arg === "--track" && (terminator < 0 || index < terminator));
   const opts = parseOptions(remaining.filter((arg, index) => !(arg === "--track" && (terminator < 0 || index < terminator))));
+  opts.draftGuard = guard.draftGuard;
   if (track && (!opts.enter || opts.idempotencyKey)) return fail("--track requires submission without --idempotency-key; reuse its tracking file after uncertainty.");
+  if (track && guard.explicit) return fail("--track delivers through the durable inbox; --draft-wait and --ignore-draft apply only to terminal input.");
   if (source !== undefined && opts.rest.length > 1) {
     return fail("Choose exactly one input source: argv text, --file, or --stdin");
   }
@@ -142,6 +193,7 @@ export async function runSendCommand(
     opts.enter,
     opts.windowLabel,
     opts.idempotencyKey,
+    opts.draftGuard,
   );
   printDelivery(agent, input, opts);
 }

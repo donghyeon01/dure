@@ -3073,6 +3073,7 @@ struct RelayedTerminalSelection {
     wheel: bool,
     multipart: bool,
     input: bool,
+    draft_guarded_input: bool,
     agent_prompt: RelayedAgentPromptOffer,
     default_colors: bool,
     preferred_width: bool,
@@ -3121,6 +3122,8 @@ fn admit_relayed_terminal_capabilities(
     );
     let default_colors = requested(TERMINAL_DEFAULT_COLORS_CAPABILITY);
     let preferred_width = requested(hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY);
+    let draft_guarded_input =
+        requested(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY);
     let runtime_state = requested(AGENT_RUNTIME_STATE_CAPABILITY);
     if (viewport
         || wheel
@@ -3128,7 +3131,8 @@ fn admit_relayed_terminal_capabilities(
         || input
         || agent_prompt.is_some()
         || default_colors
-        || preferred_width)
+        || preferred_width
+        || draft_guarded_input)
         && !binary
     {
         return Err(GatewayRefusal::new(
@@ -3169,11 +3173,19 @@ fn admit_relayed_terminal_capabilities(
         )
         .with_required_capability(TERMINAL_INPUT_INTENT_CAPABILITY));
     }
+    if draft_guarded_input && !input {
+        return Err(GatewayRefusal::new(
+            ErrorCode::UnsupportedCapability,
+            "draft-guarded input requires terminal input authority",
+        )
+        .with_required_capability(TERMINAL_INPUT_INTENT_CAPABILITY));
+    }
     Ok(RelayedTerminalSelection {
         viewport,
         wheel,
         multipart,
         input,
+        draft_guarded_input,
         agent_prompt,
         default_colors,
         preferred_width,
@@ -3202,6 +3214,9 @@ fn with_relayed_terminal_selection(
     }
     if selection.default_colors {
         options = options.with_terminal_default_colors();
+    }
+    if selection.draft_guarded_input {
+        options = options.with_terminal_draft_guarded_input();
     }
     if selection.preferred_width {
         options = options.with_terminal_preferred_width();
@@ -6259,6 +6274,7 @@ mod tests {
                 wheel: false,
                 multipart: false,
                 input: false,
+                draft_guarded_input: false,
                 agent_prompt: RelayedAgentPromptOffer::default(),
                 default_colors: false,
                 preferred_width: false,
@@ -6347,6 +6363,77 @@ mod tests {
             assert_eq!(relayed.record, resize);
             assert_eq!(relayed.record.schema_minor, 4);
             assert!(connection.terminal_input_writer_capability().is_some());
+        }
+    }
+
+    #[test]
+    fn draft_guarded_input_requires_authorized_terminal_input() {
+        for (input, ceiling, expected_code) in [
+            (
+                false,
+                GatewayRole::Controller,
+                ErrorCode::UnsupportedCapability,
+            ),
+            (true, GatewayRole::Observer, ErrorCode::AuthorizationDenied),
+        ] {
+            let mut capabilities = vec![
+                TERMINAL_STATE_BINARY_CAPABILITY,
+                TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+                hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
+            ];
+            if input {
+                capabilities.push(TERMINAL_INPUT_INTENT_CAPABILITY);
+            }
+            let refusal = admit_relayed_terminal_capabilities(
+                &hello(AttachMode::Observer, &capabilities),
+                ceiling,
+            )
+            .unwrap_err();
+            assert_eq!(refusal.code, expected_code);
+            assert_eq!(
+                refusal.required_capability.as_deref(),
+                Some(TERMINAL_INPUT_INTENT_CAPABILITY)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn draft_guarded_input_is_forwarded_only_when_requested_and_host_selected() {
+        let guarded = hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY;
+        for (requested, host_supports) in [(true, true), (true, false), (false, true)] {
+            let mut capabilities = vec![
+                TERMINAL_STATE_BINARY_CAPABILITY,
+                TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+                TERMINAL_INPUT_INTENT_CAPABILITY,
+            ];
+            if requested {
+                capabilities.push(guarded);
+            }
+            let host_capabilities = if host_supports { vec![guarded] } else { vec![] };
+            let resize = resize_intent_record();
+            let (connection, observation) = attach_relayed_profile(
+                &capabilities,
+                GatewayRole::Controller,
+                &host_capabilities,
+                false,
+                Some(encode_record(7, &resize).expect("base resize encodes")),
+            );
+            assert_eq!(
+                observation
+                    .local_hello
+                    .requested_capabilities
+                    .iter()
+                    .any(|cap| cap == guarded),
+                requested
+            );
+            assert_eq!(
+                hmux_runtime_contract::terminal_draft_guarded_input_permitted(
+                    &connection.hello_ack().selected_capabilities
+                ),
+                requested && host_supports,
+                "the peer sees the guard only when this exact Host selected it"
+            );
         }
     }
 

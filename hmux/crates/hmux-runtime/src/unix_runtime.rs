@@ -349,6 +349,9 @@ fn advertised_base_capabilities() -> Vec<String> {
     capabilities.push(TERMINAL_STATE_BINARY_CAPABILITY.to_string());
     #[cfg(feature = "terminal-state-stream")]
     capabilities.extend(viewport_projection_cutover::capabilities_when_ready().map(str::to_string));
+    #[cfg(feature = "terminal-state-stream")]
+    capabilities
+        .push(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY.to_string());
     capabilities
 }
 
@@ -4689,6 +4692,12 @@ fn serve_client(
                         .requested_capabilities
                         .iter()
                         .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY))
+                && (requested.as_str()
+                    != hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
+                    || hello
+                        .requested_capabilities
+                        .iter()
+                        .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY))
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -4746,6 +4755,9 @@ fn serve_client(
     let terminal_viewport_wheel = terminal_viewport_wheel_permitted(&selected_capabilities);
     #[cfg(feature = "terminal-state-stream")]
     let terminal_default_colors = terminal_default_colors_permitted(&selected_capabilities);
+    #[cfg(feature = "terminal-state-stream")]
+    let draft_guarded_input =
+        hmux_runtime_contract::terminal_draft_guarded_input_permitted(&selected_capabilities);
     #[cfg(feature = "terminal-state-stream")]
     let terminal_base_protocol_minor =
         selected_terminal_base_protocol_minor(&selected_capabilities)
@@ -5116,6 +5128,8 @@ fn serve_client(
             #[cfg(feature = "terminal-state-stream")]
             process_observed_agent_prompt,
             #[cfg(feature = "terminal-state-stream")]
+            draft_guarded_input,
+            #[cfg(feature = "terminal-state-stream")]
             terminal_viewport_wheel,
             #[cfg(feature = "terminal-state-stream")]
             terminal_default_colors,
@@ -5172,6 +5186,8 @@ struct ClientPermissions {
     agent_prompt: Option<AgentPromptCapabilitySelection>,
     #[cfg(feature = "terminal-state-stream")]
     process_observed_agent_prompt: bool,
+    #[cfg(feature = "terminal-state-stream")]
+    draft_guarded_input: bool,
     #[cfg(feature = "terminal-state-stream")]
     terminal_viewport_wheel: bool,
     #[cfg(feature = "terminal-state-stream")]
@@ -5256,6 +5272,7 @@ fn client_read_loop(
                         input: permissions.terminal_input_intents,
                         agent_prompt: permissions.agent_prompt,
                         process_observed_agent_prompt: permissions.process_observed_agent_prompt,
+                        draft_guarded_input: permissions.draft_guarded_input,
                         wheel: permissions.terminal_viewport_wheel,
                         default_colors: permissions.terminal_default_colors,
                         base_protocol_minor: permissions.terminal_base_protocol_minor,

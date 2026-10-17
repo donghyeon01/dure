@@ -37,6 +37,22 @@ impl SessionHost {
         Ok(())
     }
 
+    /// Reports whether accepted draft-capable controller input still awaits a
+    /// submit. Draft-guarded automation reads this under the serialized PTY
+    /// writer before its first byte, so no keystroke can interleave.
+    pub fn has_unsubmitted_controller_draft(
+        &self,
+        expected_fence: &SessionFence,
+    ) -> Result<bool, SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        Ok(replay.has_unsubmitted_controller_draft())
+    }
+
     /// Observes whether the Host should wait for provider-event startup,
     /// proceed to the serialized PTY cut, or refuse this attempt.
     pub fn agent_prompt_admission(

@@ -125,6 +125,7 @@ fn admission(input: &InputIntent) -> InputAdmission {
         Some(AgentPromptCapabilitySelection::Targeted),
         true,
         "codex",
+        false,
     )
     .unwrap()
 }
@@ -137,6 +138,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
         Some(AgentPromptCapabilitySelection::Targeted),
         true,
         "claude",
+        false,
     )
     .unwrap();
 
@@ -155,6 +157,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
             Some(AgentPromptCapabilitySelection::LegacyFresh),
             true,
             "claude",
+            false,
         ),
         Err(PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY),
         "the new target never collapses into the legacy targetless lane"
@@ -165,6 +168,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
             Some(AgentPromptCapabilitySelection::Targeted),
             false,
             "claude",
+            false,
         ),
         Err(PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY),
         "the additive target requires its own negotiated wire capability"
@@ -181,6 +185,7 @@ fn targetless_prompt_normalizes_only_at_the_legacy_capability_boundary() {
             Some(AgentPromptCapabilitySelection::Targeted),
             true,
             "codex",
+            false,
         ),
         Err(LEGACY_INITIAL_AGENT_PROMPT_CAPABILITY)
     );
@@ -189,6 +194,7 @@ fn targetless_prompt_normalizes_only_at_the_legacy_capability_boundary() {
         Some(AgentPromptCapabilitySelection::LegacyFresh),
         false,
         "codex",
+        false,
     )
     .unwrap();
     assert!(matches!(
@@ -208,6 +214,7 @@ fn legacy_targetless_prompt_uses_the_same_host_atomic_fresh_transaction() {
         Some(AgentPromptCapabilitySelection::LegacyFresh),
         false,
         "codex",
+        false,
     )
     .unwrap();
     let mut writes = Vec::new();
@@ -241,6 +248,7 @@ fn legacy_targetless_prompt_uses_the_same_host_atomic_fresh_transaction() {
             Some(AgentPromptCapabilitySelection::LegacyFresh),
             false,
             "codex",
+            false,
         )
         .unwrap(),
         |bytes| {
@@ -848,4 +856,197 @@ fn zero_byte_wait_rechecks_prompt_authority_before_delivery() {
         InputTransactionOutcome::NotWritten(OperationReceiptReason::AgentRuntimeChanged)
     );
     assert_eq!(input.bytes_written(), 0);
+}
+
+fn draft_guarded(text: &[u8], submit: bool) -> InputIntent {
+    InputIntent {
+        intent: Some(input_intent::Intent::DraftGuarded(
+            terminal_state_protocol::DraftGuardedInputIntent {
+                utf8: text.to_vec(),
+                submit,
+                admission_wait_ms: 0,
+            },
+        )),
+    }
+}
+
+fn guarded_admission(input: &InputIntent) -> InputAdmission {
+    InputAdmission::from_validated_structured(
+        input.intent.as_ref().unwrap(),
+        None,
+        false,
+        "codex",
+        true,
+    )
+    .unwrap()
+}
+
+fn apply_recorded(
+    host: &mut SessionHost,
+    scanner: &mut SubmitScanner,
+    input: PtyInput<'_>,
+    admission: InputAdmission,
+    writes: &mut Vec<Vec<u8>>,
+) -> InputTransactionOutcome {
+    apply_input_transaction(
+        host,
+        &fence(),
+        scanner,
+        input,
+        ControllerInputEffect::DraftCapable,
+        admission,
+        |bytes| {
+            writes.push(bytes.to_vec());
+            PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(()))
+        },
+    )
+    .unwrap()
+    .outcome
+}
+
+#[test]
+fn draft_guarded_input_is_refused_without_a_byte_until_a_person_submits() {
+    // Plain shells and provider-reported sessions share the same guard.
+    for mut session in [host(true), ready_host(true)] {
+        let mut scanner = SubmitScanner::default();
+        let mut writes = Vec::new();
+        assert_eq!(
+            apply_recorded(
+                &mut session,
+                &mut scanner,
+                PtyInput::Bytes(b"and a shorter cycle ("),
+                InputAdmission::Ordinary,
+                &mut writes,
+            ),
+            InputTransactionOutcome::Written
+        );
+
+        let report = draft_guarded(b"lane report", true);
+        assert_eq!(
+            apply_recorded(
+                &mut session,
+                &mut scanner,
+                PtyInput::Structured(&report),
+                guarded_admission(&report),
+                &mut writes,
+            ),
+            InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft)
+        );
+        assert_eq!(writes, vec![b"and a shorter cycle (".to_vec()]);
+        assert!(session.has_unsubmitted_controller_draft(&fence()).unwrap());
+
+        assert_eq!(
+            apply_recorded(
+                &mut session,
+                &mut scanner,
+                PtyInput::Bytes(b"10 seconds)\r"),
+                InputAdmission::Ordinary,
+                &mut writes,
+            ),
+            InputTransactionOutcome::Written
+        );
+        assert!(!session.has_unsubmitted_controller_draft(&fence()).unwrap());
+        assert_eq!(
+            apply_recorded(
+                &mut session,
+                &mut scanner,
+                PtyInput::Structured(&report),
+                guarded_admission(&report),
+                &mut writes,
+            ),
+            InputTransactionOutcome::Written
+        );
+        assert_eq!(
+            writes.last().unwrap(),
+            b"\x1b[200~lane report\x1b[201~\r",
+            "body and submit are one PTY write"
+        );
+        assert!(
+            !session.has_unsubmitted_controller_draft(&fence()).unwrap(),
+            "the guarded submit leaves no draft behind"
+        );
+    }
+}
+
+#[test]
+fn draft_guarded_text_without_submit_becomes_the_draft_that_guards_the_next_send() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    let mut writes = Vec::new();
+    let draft = draft_guarded(b"review me", false);
+    assert_eq!(
+        apply_recorded(
+            &mut host,
+            &mut scanner,
+            PtyInput::Structured(&draft),
+            guarded_admission(&draft),
+            &mut writes,
+        ),
+        InputTransactionOutcome::Written
+    );
+    assert_eq!(writes, vec![b"\x1b[200~review me\x1b[201~".to_vec()]);
+
+    let report = draft_guarded(b"lane report", true);
+    assert_eq!(
+        apply_recorded(
+            &mut host,
+            &mut scanner,
+            PtyInput::Structured(&report),
+            guarded_admission(&report),
+            &mut writes,
+        ),
+        InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft)
+    );
+    assert_eq!(
+        writes.len(),
+        1,
+        "a refused guarded write never reaches the PTY"
+    );
+}
+
+#[test]
+fn escape_does_not_release_the_draft_guard() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    let mut writes = Vec::new();
+    apply_recorded(
+        &mut host,
+        &mut scanner,
+        PtyInput::Bytes(b"half typed"),
+        InputAdmission::Ordinary,
+        &mut writes,
+    );
+    apply_recorded(
+        &mut host,
+        &mut scanner,
+        PtyInput::Bytes(b"\x1b"),
+        InputAdmission::Ordinary,
+        &mut writes,
+    );
+    let report = draft_guarded(b"lane report", true);
+    assert_eq!(
+        apply_recorded(
+            &mut host,
+            &mut scanner,
+            PtyInput::Structured(&report),
+            guarded_admission(&report),
+            &mut writes,
+        ),
+        InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft)
+    );
+}
+
+#[test]
+fn draft_guarded_input_requires_its_negotiated_capability() {
+    let report = draft_guarded(b"lane report", true);
+    assert_eq!(
+        InputAdmission::from_validated_structured(
+            report.intent.as_ref().unwrap(),
+            Some(AgentPromptCapabilitySelection::Targeted),
+            true,
+            "codex",
+            false,
+        ),
+        Err(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)
+    );
 }

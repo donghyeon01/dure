@@ -358,6 +358,16 @@ describe("architecture fitness baseline", () => {
     expect(scanArchitecture(root).directTauriInvoke).toEqual({});
   });
 
+  test("exempts only generated protocol bindings from the line ratchet", () => {
+    const root = temporaryDirectory();
+    const lines = Array.from({ length: 950 }, (_, i) => `export const v${i} = ${i};`);
+    write(root, "src/contracts/generated/terminalState/input_pb.ts", `${lines.join("\n")}\n`);
+    write(root, "src/contracts/handWritten.ts", `${lines.join("\n")}\n`);
+    expect(scanArchitecture(root).godFileLines).toEqual({
+      "src/contracts/handWritten.ts": 951,
+    });
+  });
+
   test("still flags direct invoke outside the ipc directory", () => {
     const root = temporaryDirectory();
     write(root, "src/lib/other.ts", 'invoke("x");\n');

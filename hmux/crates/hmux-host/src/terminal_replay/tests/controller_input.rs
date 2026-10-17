@@ -433,3 +433,51 @@ fn failed_controller_projection_keeps_written_input_pending() {
         "bytes already written must keep repeated prompt admission closed"
     );
 }
+
+#[test]
+fn unsubmitted_controller_draft_is_released_by_any_submit_but_not_by_provider_progress() {
+    // A plain shell has no runtime state. Its submit must still release the
+    // draft guard, while idle replacement keeps its conservative input fact.
+    let mut shell = replay_with_limits(TerminalReplayLimits::default());
+    assert!(!shell.has_unsubmitted_controller_draft());
+    shell.record_controller_write();
+    assert!(
+        !shell.has_unsubmitted_controller_draft(),
+        "control-only traffic is not a draft"
+    );
+    shell.record_controller_input();
+    assert!(shell.has_unsubmitted_controller_draft());
+    shell.record_controller_submit().unwrap();
+    assert!(!shell.has_unsubmitted_controller_draft());
+    assert!(shell.has_pending_controller_input());
+
+    for activity in [AgentRuntimeActivity::Working, AgentRuntimeActivity::Waiting] {
+        let (mut replay, _) = provider_ready_for_agent_prompt();
+        replay.record_controller_input();
+        assert!(replay.has_unsubmitted_controller_draft());
+        replay.record_controller_submit().unwrap();
+        assert!(
+            replay.has_pending_controller_input(),
+            "the submitted turn still awaits its provider report"
+        );
+        assert!(
+            !replay.has_unsubmitted_controller_draft(),
+            "a submitted turn is not a draft"
+        );
+        replay.record_controller_input();
+        replay
+            .apply_agent_state_report(state_report(activity, AgentRuntimeAttention::None, false))
+            .unwrap();
+        assert!(
+            replay.has_unsubmitted_controller_draft(),
+            "provider progress cannot release a newer draft"
+        );
+        replay.record_controller_write();
+        assert!(
+            replay.has_unsubmitted_controller_draft(),
+            "control-only traffic cannot erase a draft"
+        );
+        replay.record_controller_submit().unwrap();
+        assert!(!replay.has_unsubmitted_controller_draft());
+    }
+}

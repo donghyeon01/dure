@@ -22,14 +22,15 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 use terminal_state_protocol::{
-    AgentPromptInputIntent, ExistingConversationPromptTarget, FollowTail, FreshAgentPromptTarget,
-    InputIntent, InputReceipt, InputRefusalReason, KeyInputIntent,
-    MAX_AGENT_PROMPT_ADMISSION_WAIT_MS, MAX_VIEWPORT_FRAME_BYTES, PasteInputIntent,
-    ProcessObservedFreshAgentPromptTarget, ResizeInputIntent, ResizeReceipt, RowTermination,
-    ScrollRows, SetViewportRows, TerminalEvent, TerminalStateRecord, TextInputIntent,
-    ViewportFrame, ViewportFrameAssembler, ViewportFrameAssembly, ViewportFrameProgress,
-    ViewportIntent, WheelReceipt, agent_prompt_input_intent, decode_record, input_intent,
-    input_receipt, terminal_state_record, viewport_intent,
+    AgentPromptInputIntent, DraftGuardedInputIntent, ExistingConversationPromptTarget, FollowTail,
+    FreshAgentPromptTarget, InputIntent, InputReceipt, InputRefusalReason, KeyInputIntent,
+    MAX_AGENT_PROMPT_ADMISSION_WAIT_MS, MAX_DRAFT_GUARD_ADMISSION_WAIT_MS,
+    MAX_VIEWPORT_FRAME_BYTES, PasteInputIntent, ProcessObservedFreshAgentPromptTarget,
+    ResizeInputIntent, ResizeReceipt, RowTermination, ScrollRows, SetViewportRows, TerminalEvent,
+    TerminalStateRecord, TextInputIntent, ViewportFrame, ViewportFrameAssembler,
+    ViewportFrameAssembly, ViewportFrameProgress, ViewportIntent, WheelReceipt,
+    agent_prompt_input_intent, decode_record, input_intent, input_receipt, terminal_state_record,
+    viewport_intent,
 };
 
 const MAX_PENDING_SURFACE_EVENTS: usize = 64;
@@ -37,16 +38,22 @@ const MAX_BUFFERED_SURFACE_STEPS_PER_PASS: usize = 64;
 const MAX_BUFFERED_SURFACE_PAYLOAD_BYTES_PER_PASS: usize =
     MAX_VIEWPORT_FRAME_BYTES + DEFAULT_MAX_FRAME_BYTES;
 const AGENT_PROMPT_RECEIPT_MARGIN: Duration = Duration::from_millis(100);
+/// Pause between definite draft refusals when the Host answered before the
+/// caller's wait budget elapsed.
+const DRAFT_GUARD_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Final correlated receipts for one orchestration-level command input.
-/// Text and submit remain separate semantic records all the way to the Host;
-/// there is intentionally no controller generation because terminal input
-/// intents do not acquire a controller lease.
+/// Ordinary text and submit remain separate semantic records all the way to
+/// the Host. A draft-guarded input is one Host transaction, so its text and
+/// submit share a single record and the receipt is marked atomic. There is
+/// intentionally no controller generation because terminal input intents do
+/// not acquire a controller lease.
 #[derive(Clone, Eq, PartialEq)]
 pub struct TerminalCommandInputReceipt {
     terminal_epoch: String,
     text: Option<InputReceipt>,
     submit: Option<InputReceipt>,
+    atomic: bool,
 }
 
 impl fmt::Debug for TerminalCommandInputReceipt {
@@ -68,6 +75,7 @@ impl fmt::Debug for TerminalCommandInputReceipt {
                     .as_ref()
                     .map(|receipt| receipt.in_reply_to_record_id),
             )
+            .field("atomic", &self.atomic)
             .finish()
     }
 }
@@ -86,6 +94,13 @@ impl TerminalCommandInputReceipt {
     #[must_use]
     pub fn submit(&self) -> Option<&InputReceipt> {
         self.submit.as_ref()
+    }
+
+    /// Whether text and submit were admitted and written as one
+    /// draft-guarded Host transaction sharing a single record.
+    #[must_use]
+    pub fn atomic(&self) -> bool {
+        self.atomic
     }
 }
 
@@ -508,7 +523,8 @@ impl TerminalSurfaceAttachment {
             TerminalSurfaceAccess::ReadOnly => options,
             TerminalSurfaceAccess::Writer => options
                 .with_terminal_input_intents()
-                .with_terminal_default_colors(),
+                .with_terminal_default_colors()
+                .with_terminal_draft_guarded_input(),
         }
     }
 
@@ -1145,6 +1161,102 @@ impl TerminalSurfaceAttachment {
         self.send_command_input_before(text, submit, deadline)
     }
 
+    /// Sends automated command text as one draft-guarded Host transaction.
+    /// The Host writes body plus optional submit only while no unsubmitted
+    /// controller draft is pending, waiting up to `draft_wait` for a person to
+    /// submit theirs. A definite draft refusal is retried within that budget,
+    /// so a Host that refuses without waiting behaves the same way. Without
+    /// the negotiated guard this refuses before any byte is written rather
+    /// than degrading to ordinary paste-then-Enter input.
+    pub fn send_draft_guarded_command_input_confirmed(
+        &mut self,
+        text: String,
+        submit: bool,
+        draft_wait: Duration,
+        timeout: Duration,
+    ) -> Result<TerminalCommandInputReceipt, TerminalCommandInputError> {
+        let not_written = |error| TerminalCommandInputError::new(error, false);
+        validate_timeout(timeout).map_err(not_written)?;
+        if text.is_empty() && !submit {
+            return Err(not_written(ClientError::transport(
+                "hmux_terminal_command_input_empty",
+                "terminal command input requires text, submit, or both",
+            )));
+        }
+        if !self
+            .input_writer
+            .as_ref()
+            .is_some_and(TerminalInputWriterCapability::supports_draft_guarded_input)
+        {
+            return Err(not_written(ClientError::transport(
+                "hmux_input_draft_guard_unavailable",
+                "the target Hmux Host or relay did not negotiate draft-guarded input; nothing was written",
+            )));
+        }
+        let now = Instant::now();
+        let overflow = || {
+            not_written(ClientError::transport(
+                "hmux_terminal_command_input_deadline_invalid",
+                "terminal command input deadline overflowed",
+            ))
+        };
+        let deadline = now.checked_add(timeout).ok_or_else(overflow)?;
+        let wait_deadline = now
+            .checked_add(draft_wait.min(timeout.saturating_sub(AGENT_PROMPT_RECEIPT_MARGIN)))
+            .ok_or_else(overflow)?;
+        let terminal_epoch = self.current.terminal_epoch.clone();
+        let has_text = !text.is_empty();
+        let utf8 = text.into_bytes();
+        loop {
+            let admission_wait =
+                wait_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(u64::from(
+                        MAX_DRAFT_GUARD_ADMISSION_WAIT_MS,
+                    )));
+            let admission_wait_ms =
+                u32::try_from(admission_wait.as_millis()).map_err(|_| overflow())?;
+            let attempt = utf8.clone();
+            let receipt = self
+                .send_intent_before(
+                    move |_| InputIntent {
+                        intent: Some(input_intent::Intent::DraftGuarded(
+                            DraftGuardedInputIntent {
+                                utf8: attempt,
+                                submit,
+                                admission_wait_ms,
+                            },
+                        )),
+                    },
+                    ReceiptKind::Input,
+                    deadline,
+                )
+                .map_err(not_written)?;
+            let TerminalIntentReceipt::Input(input) = receipt else {
+                unreachable!("draft-guarded input always expects an input receipt")
+            };
+            match require_written_draft_guarded_input(input) {
+                Ok(input) => {
+                    return Ok(TerminalCommandInputReceipt {
+                        terminal_epoch,
+                        text: has_text.then(|| input.clone()),
+                        submit: submit.then_some(input),
+                        atomic: true,
+                    });
+                }
+                // Each refusal is a definite non-write, so retrying cannot
+                // duplicate delivery.
+                Err(error)
+                    if error.code() == "hmux_input_draft_pending"
+                        && Instant::now() + DRAFT_GUARD_RETRY_INTERVAL < wait_deadline =>
+                {
+                    std::thread::sleep(DRAFT_GUARD_RETRY_INTERVAL);
+                }
+                Err(error) => return Err(not_written(error)),
+            }
+        }
+    }
+
     /// Delivers a fresh managed-agent prompt as one capability-gated Host
     /// operation. The Host encodes body plus submit and admits the one-shot
     /// write only from provider-event state inside its serialized PTY transaction.
@@ -1337,6 +1449,7 @@ impl TerminalSurfaceAttachment {
             terminal_epoch,
             text,
             submit,
+            atomic: false,
         })
     }
 
@@ -1799,6 +1912,23 @@ fn require_written_input(receipt: InputReceipt) -> Result<InputReceipt, ClientEr
             "Hmux Host returned a semantic input receipt without a final outcome",
         )),
     }
+}
+
+/// A draft refusal is a definite not-written outcome with its own stable
+/// code, so the sender can retry after the person submits.
+fn require_written_draft_guarded_input(receipt: InputReceipt) -> Result<InputReceipt, ClientError> {
+    let draft_pending = matches!(
+        receipt.outcome.as_ref(),
+        Some(input_receipt::Outcome::Refused(refused))
+            if refused.reason == InputRefusalReason::UnsubmittedDraft as i32
+    );
+    if draft_pending {
+        return Err(ClientError::transport(
+            "hmux_input_draft_pending",
+            "the target terminal has unsubmitted input from its user; nothing was written",
+        ));
+    }
+    require_written_input(receipt)
 }
 
 fn require_written_agent_prompt(

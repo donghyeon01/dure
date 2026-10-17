@@ -536,6 +536,47 @@ describe("managed agent external input", () => {
 		expect(mocks.remoteHmuxCommandInput).not.toHaveBeenCalled();
 	});
 
+	it("forwards the CLI draft guard to the exact local write", async () => {
+		const prepared = prepareExactHmuxInput({
+			target: exactTarget({ hostId: "local" }),
+			text: "lane report",
+			enter: true,
+			draftGuardWaitMs: 30_000,
+		});
+		mocks.commandInput.mockResolvedValueOnce({
+			terminalEpoch: "terminal-1",
+			text: { recordId: "1", state: "written_to_pty" },
+			submit: { recordId: "1", state: "written_to_pty" },
+			atomic: true,
+		});
+
+		await expect(executeExactHmuxInput(prepared)).resolves.toMatchObject({
+			receipt: { atomic: true },
+		});
+		expect(mocks.commandInput).toHaveBeenCalledWith(
+			expect.objectContaining({
+				text: "lane report",
+				submit: true,
+				draftGuardWaitMs: 30_000,
+			}),
+		);
+	});
+
+	it.each([-1, 60_001, 1.5, "30000", null])(
+		"rejects an invalid draft guard %s before writing",
+		(draftGuardWaitMs) => {
+			expect(() =>
+				prepareExactHmuxInput({
+					target: exactTarget({ hostId: "local" }),
+					text: "lane report",
+					enter: true,
+					draftGuardWaitMs,
+				}),
+			).toThrowError(expect.objectContaining({ code: "invalid_request" }));
+			expect(mocks.commandInput).not.toHaveBeenCalled();
+		},
+	);
+
 	it("uses the same correlated input path for a standalone Hmux Agent", async () => {
 		useStore.setState((state) => ({
 			agents: state.agents.map((agent) => ({
@@ -609,6 +650,18 @@ describe("managed agent external input", () => {
 			text: "status",
 			submit: true,
 		});
+
+		await executeExactHmuxInput(
+			prepareExactHmuxInput({
+				target: exactTarget(),
+				text: "lane report",
+				enter: true,
+				draftGuardWaitMs: 5_000,
+			}),
+		);
+		expect(mocks.remoteHmuxCommandInput).toHaveBeenLastCalledWith(
+			expect.objectContaining({ text: "lane report", draftGuardWaitMs: 5_000 }),
+		);
 	});
 
 	it("routes name-based input through the exact SSH Hmux binding", async () => {

@@ -130,9 +130,13 @@ const GOD_FILE_EXEMPT = new Set([
 // i18n 사전(src/locales/*) — 문자열이 늘 때마다 기계적으로 자라는 데이터
 // 파일이라 "쪼개서 줄여라" 라쳇의 대상이 아니다. 정합성은 i18nCoverage
 // vitest 게이트가 맡는다.
+// src/contracts/generated/* — buf/protoc-gen-es output regenerated from the
+// .proto schema by `pnpm terminal-state-protocol:generate` and checked for drift.
+// It is never edited by hand, so the split-to-shrink ratchet cannot apply.
 function isGodFileExempt(filename) {
   if (GOD_FILE_EXEMPT.has(filename)) return true;
   if (filename.startsWith("src/lib/ipc/")) return true;
+  if (filename.startsWith("src/contracts/generated/")) return true;
   return filename.startsWith("src/locales/") && filename.endsWith(".ts");
 }
 

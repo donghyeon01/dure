@@ -15,7 +15,7 @@ afterEach(async () => {
 
 const structuredProfile = { schemaVersion: 1, kind: "structured_protocol", backendProfileId: "local", interactionSessionId: "interaction-1" };
 
-async function fixture({ refused = false, structured = false, wrongReceipt = false, panelId = "agent:agent-1", lostResponse = false, omitPaneId = false, inputPatch = {} } = {}) {
+async function fixture({ refused = false, refusal = { code: "stale_generation", message: "stale_generation" }, structured = false, wrongReceipt = false, panelId = "agent:agent-1", lostResponse = false, omitPaneId = false, inputPatch = {}, appCapabilities = ["hmux.input.draft_guard_v1"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-send-input-"));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
   const requests = [];
@@ -26,8 +26,10 @@ async function fixture({ refused = false, structured = false, wrongReceipt = fal
     requests.push({ path: request.url, authorization: request.headers.authorization, payload });
     if (lostResponse) { response.destroy(); return; }
     response.writeHead(refused ? 409 : 200, { "Content-Type": "application/json" });
+    // A draft-guarded write is one Host record shared by text and submit.
+    const atomic = payload.draftGuardWaitMs !== undefined;
     response.end(JSON.stringify(refused
-      ? { ok: false, error: { code: "stale_generation", message: "stale_generation" } }
+      ? { ok: false, error: refusal }
       : structured ? { ok: true, input: {
         agentId: "agent-1", name: "worker", ...(omitPaneId ? {} : { panelId }),
         sessionId: wrongReceipt ? "wrong-interaction" : "interaction-1", enter: payload.enter,
@@ -38,12 +40,13 @@ async function fixture({ refused = false, structured = false, wrongReceipt = fal
         sessionId: "session-1", workspaceId: "workspace-1",
         receipt: { terminalEpoch: "epoch-1",
           text: { recordId: "41", state: "written_to_pty" },
-          submit: payload.enter ? { recordId: "42", state: "written_to_pty" } : null },
+          submit: payload.enter ? { recordId: atomic ? "41" : "42", state: "written_to_pty" } : null,
+          ...(atomic ? { atomic: true } : {}) },
       } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   cleanups.push(() => new Promise((resolve) => server.close(resolve)));
-  writeFileSync(join(root, "server.json"), JSON.stringify({ port: server.address().port, token: "fixture-token" }));
+  writeFileSync(join(root, "server.json"), JSON.stringify({ port: server.address().port, token: "fixture-token", capabilities: appCapabilities }));
   writeRegistry(root, [{ id: "agent-1", name: "worker", project: "fixture", sessionId: "session-1",
     ...(structured ? { interactionProfile: structuredProfile } : {
       runtimeBinding: { runtime: "hmux_managed_v1", source: "local", hostId: "local",
@@ -177,12 +180,12 @@ describe("scriptable dure send input", () => {
     expect(requests).toEqual([{ path: "/hmux/input", authorization: "Bearer fixture-token", payload: {
       target: { schemaVersion: 1, targetPanelId: "agent:agent-1", hostId: "local",
         sessionId: "session-1", workspaceId: "workspace-1" },
-      text, enter: true, idempotencyKey: "send-1",
+      text, enter: true, idempotencyKey: "send-1", draftGuardWaitMs: 30_000,
     } }]);
     expect(JSON.parse(result.stdout)).toEqual({ apiVersion: "dure.send/v1", ok: true,
       target: { agentId: "agent-1", sessionId: "session-1", workspaceId: "workspace-1" },
       receipt: { terminalEpoch: "epoch-1", text: { recordId: "41", state: "written_to_pty" },
-        submit: { recordId: "42", state: "written_to_pty" } },
+        submit: { recordId: "41", state: "written_to_pty" }, atomic: true },
     });
     expect(result.stdout).not.toContain("literal");
   });
@@ -243,6 +246,38 @@ describe("scriptable dure send input", () => {
     const result = await run(["worker", "--stdin", "--no-enter"], text);
     expect(result.code).toBe(0);
     expect(requests[0].payload.text).toBe(text);
+  });
+
+  it("refuses before contacting an app that cannot guard the user's draft", async () => {
+    const { run, requests } = await fixture({ appCapabilities: [] });
+    const result = await run(["worker", "lane report"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("hmux_input_draft_guard_unavailable");
+    expect(result.stderr).toContain("Nothing was sent");
+    expect(requests).toEqual([]);
+  });
+
+  it("sends ordinary input through an older app only with --ignore-draft", async () => {
+    const { run, requests } = await fixture({ appCapabilities: [] });
+    const result = await run(["worker", "lane report", "--ignore-draft", "--json"]);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(requests[0].payload).not.toHaveProperty("draftGuardWaitMs");
+    expect(JSON.parse(result.stdout).receipt).not.toHaveProperty("atomic");
+  });
+
+  it("reports a broker draft refusal as not written with guidance and no retry", async () => {
+    const { run, requests } = await fixture({ refused: true, refusal: {
+      code: "hmux_input_draft_pending",
+      message: "the target terminal has unsubmitted input from its user; nothing was written",
+      deliveryState: "not_written",
+    } });
+    const result = await run(["worker", "lane report", "--draft-wait", "3"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("hmux_input_draft_pending");
+    expect(result.stderr).toContain("after waiting 3s");
+    expect(result.stderr).toContain("--track");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].payload.draftGuardWaitMs).toBe(3_000);
   });
 
   it("does not turn a refused delivery into success or retry it", async () => {

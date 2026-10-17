@@ -847,6 +847,113 @@ fn structured_key_and_paste_encoding_follow_the_host_terminal_modes() {
     fixture.terminate_and_verify();
 }
 
+/// A person's half-typed line and an automated report share one PTY. The
+/// report must neither merge into nor submit the unsubmitted draft: the Host
+/// refuses it with nothing written, waits while the person finishes, then
+/// writes the report alone as one body-plus-submit transaction.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_never_merges_into_an_unsubmitted_draft() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-draft-guard",
+        vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--ignored".into(),
+            "--exact".into(),
+            "standalone_draft_guard_fixture_provider".into(),
+            "--nocapture".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"DRAFT_GUARD_READY");
+    let writer = |session: &LocalSession| {
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        TerminalSurfaceAttachment::from_connection(connection).unwrap()
+    };
+    let mut person = writer(&fixture.session);
+    let mut agent = writer(&fixture.session);
+
+    person
+        .send_text_confirmed("and a shorter cycle (".into(), Duration::from_secs(2))
+        .unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"INPUT[and a shorter cycle (]");
+
+    let refused = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::from_millis(300),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+    assert_eq!(refused.code(), "hmux_input_draft_pending");
+    assert_eq!(refused.delivery_state(), "not_written");
+    std::thread::sleep(Duration::from_millis(200));
+    let screen = fixture.session.read_screen(None).unwrap();
+    assert!(
+        !screen
+            .repaint_bytes
+            .windows(b"lane report".len())
+            .any(|window| window == b"lane report"),
+        "a refused guarded write must not reach the PTY"
+    );
+
+    // The person finishes and submits while the agent's send is waiting.
+    let discovery_root = state.path().join("discovery");
+    let selector = SessionSelector::new(
+        fixture.descriptor.session_id.clone(),
+        Some(fixture.descriptor.workspace_id.clone()),
+    );
+    let finisher = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(500));
+        let session = LocalSessionCatalog::new(discovery_root)
+            .open(&selector)
+            .unwrap();
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        let mut person = TerminalSurfaceAttachment::from_connection(connection).unwrap();
+        person
+            .send_text_confirmed("10 seconds)\r".into(), Duration::from_secs(2))
+            .unwrap();
+        let _ = person.detach();
+    });
+    let delivered = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+    finisher.join().unwrap();
+    assert!(delivered.atomic());
+    assert_eq!(
+        delivered.text().unwrap().in_reply_to_record_id,
+        delivered.submit().unwrap().in_reply_to_record_id
+    );
+    wait_for_replay_snapshot(
+        &fixture.session,
+        br"INPUT[and a shorter cycle (10 seconds)\r\e[200~lane report\e[201~\r]",
+    );
+
+    let _ = person.detach();
+    let _ = agent.detach();
+    fixture.terminate_and_verify();
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn structured_surface_delivers_host_parsed_osc52_clipboard_writes() {
@@ -3970,6 +4077,43 @@ fn standalone_structured_input_encoding_fixture_provider() {
     };
     std::io::stdout().write_all(marker).unwrap();
     std::io::stdout().flush().unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+#[ignore = "launched as the deterministic provider by the draft-guard smoke"]
+fn standalone_draft_guard_fixture_provider() {
+    configure_fixture_stdin_raw();
+    let mut output = std::io::stdout();
+    output
+        .write_all(b"\x1b[?2004hDRAFT_GUARD_READY\r\n")
+        .unwrap();
+    output.flush().unwrap();
+    // Echo the complete received byte stream so the smoke can prove both the
+    // absence of a refused write and the exact order of accepted ones.
+    let mut transcript = String::new();
+    let mut buffer = [0_u8; 256];
+    loop {
+        let count = std::io::stdin().read(&mut buffer).unwrap();
+        if count == 0 {
+            break;
+        }
+        for byte in &buffer[..count] {
+            match byte {
+                0x1b => transcript.push_str("\\e"),
+                b'\r' => transcript.push_str("\\r"),
+                b'\n' => transcript.push_str("\\n"),
+                byte => transcript.push(char::from(*byte)),
+            }
+        }
+        output
+            .write_all(format!("\r\nINPUT[{transcript}]\r\n").as_bytes())
+            .unwrap();
+        output.flush().unwrap();
+    }
     loop {
         std::thread::park();
     }

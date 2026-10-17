@@ -21,6 +21,12 @@ pub(crate) enum InputAdmission {
     Ordinary,
     #[cfg(feature = "terminal-state-stream")]
     AgentPrompt(ParsedAgentPromptAdmission),
+    /// Automated body plus optional submit, admitted only while no
+    /// unsubmitted controller draft is pending.
+    #[cfg(feature = "terminal-state-stream")]
+    DraftGuarded {
+        wait: Duration,
+    },
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -37,9 +43,21 @@ impl InputAdmission {
         agent_prompt_selection: Option<AgentPromptCapabilitySelection>,
         process_observed_agent_prompt: bool,
         host_provider_id: &str,
+        draft_guarded_input: bool,
     ) -> Result<Self, &'static str> {
         use terminal_state_protocol::{agent_prompt_input_intent, input_intent};
 
+        if let input_intent::Intent::DraftGuarded(guarded) = intent {
+            // Never degrade to an ordinary write: an unnegotiated guard is an
+            // authorization refusal, not an unguarded paste.
+            return if draft_guarded_input {
+                Ok(Self::DraftGuarded {
+                    wait: Duration::from_millis(u64::from(guarded.admission_wait_ms)),
+                })
+            } else {
+                Err(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)
+            };
+        }
         let input_intent::Intent::AgentPrompt(prompt) = intent else {
             return Ok(Self::Ordinary);
         };
@@ -103,7 +121,17 @@ impl InputAdmission {
     ) -> Option<(&hmux_host::terminal_replay::AgentPromptTarget, Duration)> {
         match self {
             Self::AgentPrompt(prompt) => Some((&prompt.target, prompt.wait)),
-            Self::Ordinary => None,
+            Self::Ordinary | Self::DraftGuarded { .. } => None,
+        }
+    }
+
+    /// The bounded Host wait for an unsubmitted draft, when this write is
+    /// draft-guarded.
+    #[cfg(feature = "terminal-state-stream")]
+    pub(crate) fn draft_guard_wait(&self) -> Option<Duration> {
+        match self {
+            Self::DraftGuarded { wait } => Some(*wait),
+            Self::Ordinary | Self::AgentPrompt(_) => None,
         }
     }
 }

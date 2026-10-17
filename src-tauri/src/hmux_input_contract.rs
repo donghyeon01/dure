@@ -23,6 +23,9 @@ pub(crate) struct HmuxCommandInputReceipt {
     text: Option<HmuxSemanticInputReceipt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     submit: Option<HmuxSemanticInputReceipt>,
+    /// Text and submit share one draft-guarded Host record.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    atomic: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -100,7 +103,39 @@ pub(crate) fn project_command_input_receipt(
             record_id: receipt.in_reply_to_record_id.to_string(),
             state: "written_to_pty",
         }),
+        atomic: receipt.atomic(),
     }
+}
+
+/// Sends one command input, through the Host draft guard when the caller
+/// asked for it. A guarded request never falls back to ordinary input.
+pub(crate) fn send_command_input(
+    surface: &mut TerminalSurfaceAttachment,
+    text: String,
+    submit: bool,
+    draft_guard_wait_ms: Option<u32>,
+    timeout: Duration,
+) -> Result<HmuxCommandInputReceipt, HmuxInputFailure> {
+    let receipt = match draft_guard_wait_ms {
+        Some(wait_ms) if wait_ms > terminal_state_protocol::MAX_DRAFT_GUARD_ADMISSION_WAIT_MS => {
+            return Err(HmuxInputFailure::not_written(
+                "hmux_command_input_invalid",
+                "draft guard wait exceeds its bound",
+            ));
+        }
+        Some(wait_ms) => {
+            let draft_wait = Duration::from_millis(u64::from(wait_ms));
+            surface.send_draft_guarded_command_input_confirmed(
+                text,
+                submit,
+                draft_wait,
+                draft_wait + timeout,
+            )
+        }
+        None => surface.send_command_input_confirmed(text, submit, timeout),
+    }
+    .map_err(HmuxInputFailure::from_command_input)?;
+    Ok(project_command_input_receipt(&receipt))
 }
 
 pub(crate) fn project_agent_prompt_receipt(
@@ -178,6 +213,7 @@ mod tests {
                 record_id: "8".into(),
                 state: "written_to_pty",
             }),
+            atomic: false,
         };
 
         assert_eq!(
@@ -186,6 +222,28 @@ mod tests {
                 "terminalEpoch": "terminal-1",
                 "text": { "recordId": "7", "state": "written_to_pty" },
                 "submit": { "recordId": "8", "state": "written_to_pty" }
+            })
+        );
+
+        let guarded = HmuxCommandInputReceipt {
+            terminal_epoch: "terminal-1".into(),
+            text: Some(HmuxSemanticInputReceipt {
+                record_id: "9".into(),
+                state: "written_to_pty",
+            }),
+            submit: Some(HmuxSemanticInputReceipt {
+                record_id: "9".into(),
+                state: "written_to_pty",
+            }),
+            atomic: true,
+        };
+        assert_eq!(
+            serde_json::to_value(guarded).unwrap(),
+            serde_json::json!({
+                "terminalEpoch": "terminal-1",
+                "text": { "recordId": "9", "state": "written_to_pty" },
+                "submit": { "recordId": "9", "state": "written_to_pty" },
+                "atomic": true
             })
         );
     }

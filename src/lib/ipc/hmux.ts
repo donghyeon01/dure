@@ -226,6 +226,9 @@ export const hmux = {
 		expectedFence?: HmuxManagedStopFenceV1;
 		text: string;
 		submit: boolean;
+		/** Automated input waits up to this long for the user's draft and is
+		 * refused, unwritten, while one remains. */
+		draftGuardWaitMs?: number;
 	}) => {
 		const value = await invoke<unknown>("hmux_command_input", {
 			request: {
@@ -234,12 +237,16 @@ export const hmux = {
 				expectedFence: request.expectedFence ?? null,
 				text: request.text,
 				submit: request.submit,
+				...(request.draftGuardWaitMs === undefined
+					? {}
+					: { draftGuardWaitMs: request.draftGuardWaitMs }),
 			},
 		});
 		return parseHmuxCommandInputReceipt(value, {
 			terminalEpoch: request.expectedFence?.terminalEpoch,
 			text: request.text.length > 0,
 			submit: request.submit,
+			atomic: request.draftGuardWaitMs !== undefined,
 		});
 	},
 	initialAgentPrompt: async (request: HmuxInitialAgentPromptRequest) => {

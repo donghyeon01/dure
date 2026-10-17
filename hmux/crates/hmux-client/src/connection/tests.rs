@@ -3833,6 +3833,211 @@ fn command_input_keeps_paste_submit_enter_only_and_draft_as_semantic_intents() {
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
+fn draft_guarded_builder_is_always_a_semantic_writer() {
+    use hmux_runtime_contract::{
+        TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
+        TERMINAL_STATE_BINARY_CAPABILITY, TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+    };
+
+    let options =
+        ConnectionOptions::new(LocalAttachRole::Observer, None).with_terminal_draft_guarded_input();
+    let profile = attach_capability_profile(&options);
+    for required in [
+        TERMINAL_STATE_BINARY_CAPABILITY,
+        TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+        TERMINAL_INPUT_INTENT_CAPABILITY,
+    ] {
+        assert!(profile.required.contains(&required));
+    }
+    assert!(
+        profile
+            .requested
+            .iter()
+            .any(|capability| capability == TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)
+    );
+    assert!(
+        !profile
+            .required
+            .contains(&TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY),
+        "older Hosts may omit the optional guard"
+    );
+}
+
+#[cfg(feature = "terminal-state-stream")]
+fn guarded_writer_surface(
+    selected: &[&str],
+    receipts: &[(u64, terminal_state_protocol::input_receipt::Outcome)],
+) -> (crate::TerminalSurfaceAttachment, MemoryEndpoint) {
+    use terminal_state_protocol::{
+        InputReceipt, TerminalStateRecord, encode_record, terminal_state_record,
+    };
+
+    let (client, mut host) = MemoryEndpoint::pair();
+    let mut ack = hello_ack(selected);
+    ack.current_output_seq = 1;
+    host.write_frame(
+        &codec()
+            .encode(&WireFrame {
+                protocol_version: PROTOCOL_V1,
+                frame_id: 1,
+                body: FrameBody::HelloAck(ack),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    write_opaque_payload(
+        &mut host,
+        &encode_record(2, &viewport_seed_record()).unwrap(),
+    );
+    for (record_id, outcome) in receipts {
+        write_opaque_payload(
+            &mut host,
+            &encode_record(
+                100 + record_id,
+                &TerminalStateRecord {
+                    schema_minor: u32::from(TERMINAL_STATE_BASE_PROTOCOL_MINOR),
+                    terminal_epoch: fence().terminal_epoch,
+                    through_output_seq: 1,
+                    state_revision: *record_id,
+                    body: Some(terminal_state_record::Body::InputReceipt(InputReceipt {
+                        in_reply_to_record_id: *record_id,
+                        outcome: Some(outcome.clone()),
+                    })),
+                },
+            )
+            .unwrap(),
+        );
+    }
+    let connection = terminal_surface_connection(client, crate::TerminalSurfaceAccess::Writer);
+    (
+        crate::TerminalSurfaceAttachment::from_connection(connection).unwrap(),
+        host,
+    )
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_never_degrades_on_a_host_without_the_guard() {
+    use hmux_runtime_contract::{
+        TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
+        TERMINAL_STATE_BINARY_CAPABILITY, TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+    };
+
+    let (mut surface, mut host) = guarded_writer_surface(
+        &[
+            "screen_snapshot",
+            "live_output",
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_INPUT_INTENT_CAPABILITY,
+        ],
+        &[],
+    );
+    let error = surface
+        .send_draft_guarded_command_input_confirmed(
+            "report".into(),
+            true,
+            Duration::from_millis(50),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), "hmux_input_draft_guard_unavailable");
+    assert_eq!(error.delivery_state(), "not_written");
+    let frame = host.read_frame(&codec()).unwrap().unwrap();
+    let FrameBody::Hello(hello) = &frame.frame().body else {
+        panic!("writer attach did not begin with Hello");
+    };
+    assert!(
+        hello
+            .requested_capabilities
+            .iter()
+            .any(|capability| capability == TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY),
+        "every writer offers the guard so a current Host can select it"
+    );
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_is_one_intent_with_a_stable_draft_refusal() {
+    use hmux_runtime_contract::{
+        TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
+        TERMINAL_STATE_BINARY_CAPABILITY, TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+    };
+    use terminal_state_protocol::{
+        InputRefusalReason, InputRefused, InputWrittenToPty, input_intent, input_receipt,
+        terminal_state_record,
+    };
+
+    let (mut surface, mut host) = guarded_writer_surface(
+        &[
+            "screen_snapshot",
+            "live_output",
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_INPUT_INTENT_CAPABILITY,
+            TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
+        ],
+        &[
+            (
+                1,
+                input_receipt::Outcome::Refused(InputRefused {
+                    reason: InputRefusalReason::UnsubmittedDraft as i32,
+                    detail: None,
+                }),
+            ),
+            (
+                2,
+                input_receipt::Outcome::WrittenToPty(InputWrittenToPty {
+                    input_baseline_output_sequence: Some(1),
+                    agent_runtime_revision: None,
+                }),
+            ),
+        ],
+    );
+
+    let refused = surface
+        .send_draft_guarded_command_input_confirmed(
+            "report".into(),
+            true,
+            Duration::from_millis(250),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+    assert_eq!(refused.code(), "hmux_input_draft_pending");
+    assert_eq!(refused.delivery_state(), "not_written");
+
+    let receipt = surface
+        .send_draft_guarded_command_input_confirmed(
+            "report".into(),
+            true,
+            Duration::from_millis(250),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(receipt.atomic());
+    assert_eq!(receipt.text().unwrap().in_reply_to_record_id, 2);
+    assert_eq!(receipt.submit().unwrap().in_reply_to_record_id, 2);
+
+    let hello = host.read_frame(&codec()).unwrap().unwrap();
+    assert!(matches!(hello.frame().body, FrameBody::Hello(_)));
+    for expected_record_id in 1..=2 {
+        let encoded = host.read_payload(&codec()).unwrap().unwrap();
+        let decoded = terminal_state_protocol::decode_record(&encoded).unwrap();
+        assert_eq!(decoded.metadata.record_id, expected_record_id);
+        let Some(terminal_state_record::Body::InputIntent(intent)) = decoded.record.body else {
+            panic!("guarded input did not remain semantic");
+        };
+        let Some(input_intent::Intent::DraftGuarded(guarded)) = intent.intent else {
+            panic!("guarded input must be one draft-guarded intent");
+        };
+        assert_eq!(guarded.utf8, b"report");
+        assert!(guarded.submit);
+        assert_eq!(guarded.admission_wait_ms, 250);
+    }
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
 fn command_input_uses_one_absolute_deadline_for_text_and_submit_writes() {
     use hmux_runtime_contract::{
         TERMINAL_INPUT_INTENT_CAPABILITY, TERMINAL_STATE_BINARY_CAPABILITY,

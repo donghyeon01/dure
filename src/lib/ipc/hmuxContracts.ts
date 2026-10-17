@@ -553,6 +553,8 @@ export interface HmuxCommandInputReceipt {
 	terminalEpoch: string;
 	text?: HmuxSemanticInputReceipt;
 	submit?: HmuxSemanticInputReceipt;
+	/** Text and submit were one draft-guarded Host write sharing a record. */
+	atomic?: true;
 }
 
 /** Exact managed runtime identity and fence for one Host-admitted prompt. */

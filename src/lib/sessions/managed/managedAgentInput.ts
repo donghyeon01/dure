@@ -50,6 +50,8 @@ import { useStore } from "@/store";
 import type { Agent } from "@/types";
 
 export const MAX_MANAGED_AGENT_INPUT_BYTES = 48 * 1024;
+/** Upper bound of one Host wait for a user's unsubmitted draft. */
+const MAX_DRAFT_GUARD_WAIT_MS = 60_000;
 
 interface PreparedHmuxAgentInput extends PreparedExactHmuxInput {
 	kind: "hmux";
@@ -83,6 +85,8 @@ export interface PreparedExactHmuxInput {
 	text: string;
 	byteLength: number;
 	enter: boolean;
+	/** Set for automated sends, which must not merge into the user's draft. */
+	draftGuardWaitMs?: number;
 }
 
 export interface ManagedAgentInputResult {
@@ -141,7 +145,25 @@ function inputPayload(params: Record<string, unknown>) {
 			`Hmux input exceeds ${MAX_MANAGED_AGENT_INPUT_BYTES} bytes`,
 		);
 	}
-	return { text: params.text, byteLength, enter };
+	const draftGuardWaitMs = params.draftGuardWaitMs;
+	if (
+		draftGuardWaitMs !== undefined &&
+		(typeof draftGuardWaitMs !== "number" ||
+			!Number.isInteger(draftGuardWaitMs) ||
+			draftGuardWaitMs < 0 ||
+			draftGuardWaitMs > MAX_DRAFT_GUARD_WAIT_MS)
+	) {
+		throw new PaneCommandError(
+			"invalid_request",
+			`draftGuardWaitMs must be an integer from 0 to ${MAX_DRAFT_GUARD_WAIT_MS}`,
+		);
+	}
+	return {
+		text: params.text,
+		byteLength,
+		enter,
+		...(draftGuardWaitMs === undefined ? {} : { draftGuardWaitMs }),
+	};
 }
 
 export function prepareManagedAgentInput(
@@ -299,6 +321,7 @@ async function sendLocalCommandInput(
 	target: HmuxAgentTarget | HmuxExactInputTarget,
 	text: string,
 	submit: boolean,
+	draftGuardWaitMs?: number,
 ): Promise<HmuxCommandInputReceipt> {
 	const binding = target.binding;
 	if (binding.source !== "local") {
@@ -322,6 +345,7 @@ async function sendLocalCommandInput(
 			expectedFence,
 			text,
 			submit,
+			...(draftGuardWaitMs === undefined ? {} : { draftGuardWaitMs }),
 		})
 		.catch(rethrowCommandInputFailure);
 	return receipt;
@@ -517,12 +541,16 @@ export async function executeExactHmuxInput(
 			session: resolution.session,
 			text: prepared.text,
 			submit: prepared.enter,
+			...(prepared.draftGuardWaitMs === undefined
+				? {}
+				: { draftGuardWaitMs: prepared.draftGuardWaitMs }),
 		}).catch(rethrowCommandInputFailure);
 	} else {
 		receipt = await sendLocalCommandInput(
 			current,
 			prepared.text,
 			prepared.enter,
+			prepared.draftGuardWaitMs,
 		);
 	}
 	if (prepared.enter)

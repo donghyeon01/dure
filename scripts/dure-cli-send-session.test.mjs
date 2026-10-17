@@ -16,7 +16,7 @@ function fixture(session = hmuxSession(), input = {}, { delayMs = 0, exitCode = 
 import { appendFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
-if (args.includes('capabilities')) console.log(JSON.stringify({schemaVersion:2,capabilities:['semantic_command_input_v1','semantic_key_input_v1']}));
+if (args.includes('capabilities')) console.log(JSON.stringify({schemaVersion:2,capabilities:['semantic_command_input_v1','semantic_key_input_v1','draft_guarded_command_input_v1']}));
 else if (args.includes('show')) console.log(JSON.stringify(${JSON.stringify(session)}));
 else if (args.includes('command-input')) {
   if (args.includes('--key')) {
@@ -25,7 +25,8 @@ else if (args.includes('command-input')) {
   }
   if (${delayMs}) await new Promise(resolve => setTimeout(resolve, ${delayMs}));
   process.exitCode = ${exitCode};
-  console.log(JSON.stringify({ok:true,receipt:{terminalEpoch:'terminal-1',text:{recordId:'1',state:'written_to_pty'},submit:args.includes('--submit')?{recordId:'2',state:'written_to_pty'}:null},...${JSON.stringify(input)}}));
+  const atomic = args.includes('--draft-guard-wait-ms');
+  console.log(JSON.stringify({ok:true,receipt:{terminalEpoch:'terminal-1',text:{recordId:'1',state:'written_to_pty'},submit:args.includes('--submit')?{recordId:atomic?'1':'2',state:'written_to_pty'}:null,...(atomic?{atomic:true}:{})},...${JSON.stringify(input)}}));
 } else process.exit(72);
 `);
   chmodSync(hmux, 0o700);
@@ -84,13 +85,23 @@ describe("exact managed Session send without a client registry", () => {
 
   it("reports a process watchdog as uncertain delivery without retrying", () => {
     const f = fixture(hmuxSession(), {}, { delayMs: 16_000 });
-    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello"]);
+    // A zero draft wait keeps the fifteen-second native input watchdog.
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--draft-wait", "0"]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("hmux_command_input_process_timeout");
     expect(result.stderr).toContain("stage=process_watchdog");
     expect(result.stderr).toContain("deliveryState=outcome_unknown");
     expect(result.stderr).toContain("dure inspect");
     expect(f.calls().filter((args) => args.includes("command-input"))).toHaveLength(1);
+  });
+  it("guards an exact Session against the user's unsubmitted draft", () => {
+    const f = fixture();
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--draft-wait", "4", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).receipt).toMatchObject({atomic:true,text:{recordId:"1"},submit:{recordId:"1"}});
+    const writes = f.calls().filter((args) => args.includes("command-input"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0][writes[0].indexOf("--draft-guard-wait-ms") + 1]).toBe("4000");
   });
   it.each([[], ["--workspace", "workspace-1"]])("looks up the live generation and sends once: %j", (...scope) => {
     const f = fixture();

@@ -572,6 +572,9 @@ pub enum OperationReceiptReason {
     InvalidTerminalDimensions,
     PlatformResizeFailed,
     AgentRuntimeChanged,
+    /// A draft-guarded write found unsubmitted controller input; nothing was
+    /// written. Classic JSON input never produces this reason.
+    UnsubmittedDraft,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

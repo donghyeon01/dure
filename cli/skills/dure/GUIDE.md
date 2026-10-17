@@ -613,6 +613,10 @@ If `dure send` reports `hmux_command_input_process_timeout`, delivery is unknown
 Use `dure read` and `dure inspect` to inspect the target before sending again.
 Native failures preserve their delivery state; a missing receipt is not proof
 that nothing reached the terminal. Direct input is never automatically retried.
+`hmux_input_draft_pending` is different: it is a definite non-write because the
+person has unsubmitted input in that terminal. Retry later or send a `--track`
+message. `hmux_input_draft_guard_unavailable` means the target runtime predates
+the draft guard; ask the user before resending with `--ignore-draft`.
 
 ## Dispatch deadlines
 

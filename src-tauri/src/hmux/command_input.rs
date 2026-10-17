@@ -7,7 +7,7 @@ use hmux_client::{
 use serde::Deserialize;
 
 use crate::hmux_input_contract::{
-    project_command_input_receipt, send_fresh_agent_prompt, HmuxCommandInputReceipt,
+    send_command_input, send_fresh_agent_prompt, HmuxCommandInputReceipt,
     HmuxInitialAgentPromptReceipt, HmuxInputFailure,
 };
 
@@ -21,6 +21,10 @@ pub(crate) struct HmuxCommandInputRequest {
     expected_fence: Option<ManagedStopFence>,
     text: String,
     submit: bool,
+    /// Present for automated input that must not merge into a person's
+    /// unsubmitted draft; absent for the user's own UI actions.
+    #[serde(default)]
+    draft_guard_wait_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,10 +67,13 @@ fn send_local_command(
         request.expected_fence.as_ref(),
     )?;
     let mut surface = connect_writer_surface(session)?;
-    let receipt = surface
-        .send_command_input_confirmed(request.text, request.submit, Duration::from_secs(10))
-        .map_err(HmuxInputFailure::from_command_input)?;
-    let projected = project_command_input_receipt(&receipt);
+    let projected = send_command_input(
+        &mut surface,
+        request.text,
+        request.submit,
+        request.draft_guard_wait_ms,
+        Duration::from_secs(10),
+    )?;
     let _ = surface.detach();
     Ok(projected)
 }

@@ -12,6 +12,7 @@ message InputIntent {
     FocusInputIntent focus = 14;
     ResizeInputIntent resize = 15;
     AgentPromptInputIntent agent_prompt = 16;
+    DraftGuardedInputIntent draft_guarded = 17;
   }
 }
 message TextInputIntent { bytes utf8 = 1; }
@@ -132,6 +133,9 @@ enum InputRefusalReason {
   INPUT_REFUSAL_REASON_RESOURCE_LIMIT = 4;
   INPUT_REFUSAL_REASON_HOST_EXITING = 5;
   INPUT_REFUSAL_REASON_AGENT_RUNTIME_CHANGED = 6;
+  // A draft-guarded intent found unsubmitted controller input. Nothing was
+  // written; the sender may retry after the draft is submitted.
+  INPUT_REFUSAL_REASON_UNSUBMITTED_DRAFT = 7;
 }
 
 message InputFailed {
@@ -187,4 +191,15 @@ enum ResizeFailureReason {
   RESIZE_FAILURE_REASON_PLATFORM_RESIZE_FAILED = 1;
   RESIZE_FAILURE_REASON_RESOURCE_LIMIT = 2;
   RESIZE_FAILURE_REASON_HOST_EXITING = 3;
+}
+
+// Automated command text written as one paste-plus-optional-submit PTY
+// transaction. The Host admits it only while no unsubmitted controller draft
+// is pending, so automation can neither merge into nor submit text a person
+// is still composing. Admission waits up to admission_wait_ms for that draft
+// to be submitted, then refuses with nothing written.
+message DraftGuardedInputIntent {
+  bytes utf8 = 1;
+  bool submit = 2;
+  uint32 admission_wait_ms = 3;
 }

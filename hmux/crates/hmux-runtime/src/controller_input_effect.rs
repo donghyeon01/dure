@@ -39,6 +39,7 @@ impl ControllerInputEffect {
             }
             input_intent::Intent::Text(_)
             | input_intent::Intent::AgentPrompt(_)
+            | input_intent::Intent::DraftGuarded(_)
             | input_intent::Intent::Key(_) => Some(Self::DraftCapable),
             input_intent::Intent::Paste(paste) if !paste.utf8.is_empty() => {
                 Some(Self::DraftCapable)

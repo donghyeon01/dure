@@ -241,6 +241,10 @@ pub const TERMINAL_DEFAULT_COLORS_CAPABILITY: &str = "terminal_default_colors_v1
 /// this role does not resize the terminal or grant input authority by itself.
 /// Resize records and receipts remain on the existing base protocol minor.
 pub const TERMINAL_PREFERRED_WIDTH_CAPABILITY: &str = "terminal_preferred_width_v1";
+/// Lets a writable structured surface send a draft-guarded input intent: body
+/// plus optional submit written as one PTY transaction and admitted only while
+/// no unsubmitted controller draft is pending. Records use the base minor.
+pub const TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY: &str = "terminal_draft_guarded_input_v1";
 
 /// Selects exactly one prompt wire lane without reinterpreting independent
 /// terminal capabilities requested by the same attachment.
@@ -318,7 +322,8 @@ pub fn terminal_capability_request_is_consistent(requested_capabilities: &[Strin
         || requested(TERMINAL_VIEWPORT_WHEEL_CAPABILITY)
         || requested(TERMINAL_VIEWPORT_MULTIPART_CAPABILITY)
         || requested(TERMINAL_DEFAULT_COLORS_CAPABILITY)
-        || requested(TERMINAL_PREFERRED_WIDTH_CAPABILITY);
+        || requested(TERMINAL_PREFERRED_WIDTH_CAPABILITY)
+        || requested(TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY);
     binary == viewport
         && (!dependent || (binary && viewport))
         && (!process_observed_agent_prompt || requested(AGENT_PROMPT_CAPABILITY))
@@ -403,6 +408,24 @@ pub fn terminal_preferred_width_permitted(selected_capabilities: &[String]) -> b
         TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
         TERMINAL_INPUT_INTENT_CAPABILITY,
         TERMINAL_PREFERRED_WIDTH_CAPABILITY,
+    ]
+    .into_iter()
+    .all(|required| {
+        selected_capabilities
+            .iter()
+            .any(|selected| selected == required)
+    })
+}
+
+/// Draft-guarded input is a writable-surface operation; neither presentation
+/// nor the capability alone grants it.
+#[must_use]
+pub fn terminal_draft_guarded_input_permitted(selected_capabilities: &[String]) -> bool {
+    [
+        TERMINAL_STATE_BINARY_CAPABILITY,
+        TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+        TERMINAL_INPUT_INTENT_CAPABILITY,
+        TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
     ]
     .into_iter()
     .all(|required| {
@@ -5881,6 +5904,32 @@ mod tests {
         }
         assert!(!terminal_capability_request_is_consistent(&[
             TERMINAL_PREFERRED_WIDTH_CAPABILITY.to_string(),
+        ]));
+    }
+
+    #[test]
+    fn draft_guarded_input_requires_a_complete_writable_surface() {
+        let complete = [
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_INPUT_INTENT_CAPABILITY,
+            TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
+        ]
+        .map(str::to_string)
+        .to_vec();
+        assert!(terminal_capability_request_is_consistent(&complete));
+        assert!(terminal_draft_guarded_input_permitted(&complete));
+        assert_eq!(selected_terminal_base_protocol_minor(&complete), Some(4));
+        for excluded in &complete {
+            let incomplete = complete
+                .iter()
+                .filter(|value| *value != excluded)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!terminal_draft_guarded_input_permitted(&incomplete));
+        }
+        assert!(!terminal_capability_request_is_consistent(&[
+            TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY.to_string(),
         ]));
     }
 

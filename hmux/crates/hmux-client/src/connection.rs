@@ -261,6 +261,21 @@ impl ConnectionOptions {
         self
     }
 
+    /// Requests draft-guarded input on this writable surface. Older Hosts and
+    /// relays omit the optional selection; a guarded send then refuses before
+    /// writing instead of degrading to ordinary paste-then-Enter input.
+    #[cfg(feature = "terminal-state-stream")]
+    #[must_use]
+    pub fn with_terminal_draft_guarded_input(mut self) -> Self {
+        self.terminal_viewport_projection = true;
+        self.terminal_input = TerminalInputRequest::Full;
+        let capability = hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY;
+        if !self.optional_capabilities.contains(&capability) {
+            self.optional_capabilities.push(capability);
+        }
+        self
+    }
+
     /// Selects complete, replaceable viewport frames for this connection.
     #[cfg(feature = "terminal-state-stream")]
     #[must_use]
@@ -1282,6 +1297,7 @@ pub struct TerminalInputWriterCapability {
     ordinary_input: bool,
     agent_prompt: Option<AgentPromptCapabilitySelection>,
     process_observed_agent_prompt: bool,
+    draft_guarded_input: bool,
 }
 
 /// Attach-time structured ingress authority. Projection and semantic PTY input
@@ -1485,6 +1501,10 @@ impl TerminalInputWriterCapability {
         self.process_observed_agent_prompt
     }
 
+    pub(crate) fn supports_draft_guarded_input(&self) -> bool {
+        self.draft_guarded_input
+    }
+
     /// Sends semantic input through the writer capability validated at attach.
     pub fn send_input(
         &self,
@@ -1549,6 +1569,7 @@ impl TerminalInputWriterCapability {
             InputCapabilityRequirement::LegacyFreshAgentPrompt => {
                 self.agent_prompt == Some(AgentPromptCapabilitySelection::LegacyFresh)
             }
+            InputCapabilityRequirement::DraftGuarded => self.draft_guarded_input,
         };
         if !available {
             return Err(ClientError::MissingCapability {
@@ -1598,6 +1619,7 @@ enum InputCapabilityRequirement {
     TargetedAgentPrompt,
     ProcessObservedAgentPrompt,
     LegacyFreshAgentPrompt,
+    DraftGuarded,
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -1608,6 +1630,7 @@ impl InputCapabilityRequirement {
             Self::FreshAgentPrompt | Self::TargetedAgentPrompt => AGENT_PROMPT_CAPABILITY,
             Self::ProcessObservedAgentPrompt => PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY,
             Self::LegacyFreshAgentPrompt => LEGACY_INITIAL_AGENT_PROMPT_CAPABILITY,
+            Self::DraftGuarded => hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
         }
     }
 }
@@ -1636,6 +1659,9 @@ fn required_input_capability(
                 ) => InputCapabilityRequirement::ProcessObservedAgentPrompt,
                 None => InputCapabilityRequirement::LegacyFreshAgentPrompt,
             }
+        }
+        Some(terminal_state_protocol::input_intent::Intent::DraftGuarded(_)) => {
+            InputCapabilityRequirement::DraftGuarded
         }
         _ => InputCapabilityRequirement::Ordinary,
     };
@@ -2529,6 +2555,11 @@ fn complete_attach(
         .iter()
         .any(|capability| capability == PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY);
     #[cfg(feature = "terminal-state-stream")]
+    let draft_guarded_input = options.terminal_input == TerminalInputRequest::Full
+        && hmux_runtime_contract::terminal_draft_guarded_input_permitted(
+            &hello_ack.selected_capabilities,
+        );
+    #[cfg(feature = "terminal-state-stream")]
     let terminal_viewport_projection = options.terminal_viewport_projection;
     #[cfg(feature = "terminal-state-stream")]
     let initial_structured_provider_identity = initial_terminal_state
@@ -2616,6 +2647,7 @@ fn complete_attach(
                 && options.terminal_input == TerminalInputRequest::Full,
             agent_prompt,
             process_observed_agent_prompt,
+            draft_guarded_input,
         });
     Ok(LocalConnection {
         reader,

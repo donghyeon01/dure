@@ -33,7 +33,7 @@ use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError, Response};
 use tauri::{Runtime, State};
 
 use crate::hmux_input_contract::{
-    project_command_input_receipt, send_fresh_agent_prompt, HmuxCommandInputReceipt,
+    send_command_input, send_fresh_agent_prompt, HmuxCommandInputReceipt,
     HmuxInitialAgentPromptReceipt, HmuxInputFailure,
 };
 use crate::managed_create_resolution::{
@@ -582,6 +582,8 @@ pub(crate) struct WindowsCommandInputRequest {
     expected_fence: Option<WindowsManagedStopFence>,
     text: String,
     submit: bool,
+    #[serde(default)]
+    draft_guard_wait_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1651,10 +1653,13 @@ impl WindowsHmuxState {
             &request.workspace_id,
             request.expected_fence.as_ref(),
         )?;
-        let receipt = surface
-            .send_command_input_confirmed(request.text, request.submit, COMMAND_INPUT_TIMEOUT)
-            .map_err(HmuxInputFailure::from_command_input)?;
-        let projected = project_command_input_receipt(&receipt);
+        let projected = send_command_input(
+            &mut surface,
+            request.text,
+            request.submit,
+            request.draft_guard_wait_ms,
+            COMMAND_INPUT_TIMEOUT,
+        )?;
         let _ = surface.detach();
         Ok(projected)
     }

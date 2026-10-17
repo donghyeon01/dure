@@ -2,7 +2,10 @@
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
 pub struct InputIntent {
-    #[prost(oneof = "input_intent::Intent", tags = "10, 11, 12, 13, 14, 15, 16")]
+    #[prost(
+        oneof = "input_intent::Intent",
+        tags = "10, 11, 12, 13, 14, 15, 16, 17"
+    )]
     pub intent: ::core::option::Option<input_intent::Intent>,
 }
 /// Nested message and enum types in `InputIntent`.
@@ -24,6 +27,8 @@ pub mod input_intent {
         Resize(super::ResizeInputIntent),
         #[prost(message, tag = "16")]
         AgentPrompt(super::AgentPromptInputIntent),
+        #[prost(message, tag = "17")]
+        DraftGuarded(super::DraftGuardedInputIntent),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -267,6 +272,21 @@ pub struct ResizeFailed {
     #[prost(enumeration = "ResizeFailureReason", tag = "1")]
     pub reason: i32,
 }
+/// Automated command text written as one paste-plus-optional-submit PTY
+/// transaction. The Host admits it only while no unsubmitted controller draft
+/// is pending, so automation can neither merge into nor submit text a person
+/// is still composing. Admission waits up to admission_wait_ms for that draft
+/// to be submitted, then refuses with nothing written.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct DraftGuardedInputIntent {
+    #[prost(bytes = "vec", tag = "1")]
+    pub utf8: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bool, tag = "2")]
+    pub submit: bool,
+    #[prost(uint32, tag = "3")]
+    pub admission_wait_ms: u32,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum PointerKind {
@@ -312,6 +332,9 @@ pub enum InputRefusalReason {
     ResourceLimit = 4,
     HostExiting = 5,
     AgentRuntimeChanged = 6,
+    /// A draft-guarded intent found unsubmitted controller input. Nothing was
+    /// written; the sender may retry after the draft is submitted.
+    UnsubmittedDraft = 7,
 }
 impl InputRefusalReason {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -327,6 +350,7 @@ impl InputRefusalReason {
             Self::ResourceLimit => "INPUT_REFUSAL_REASON_RESOURCE_LIMIT",
             Self::HostExiting => "INPUT_REFUSAL_REASON_HOST_EXITING",
             Self::AgentRuntimeChanged => "INPUT_REFUSAL_REASON_AGENT_RUNTIME_CHANGED",
+            Self::UnsubmittedDraft => "INPUT_REFUSAL_REASON_UNSUBMITTED_DRAFT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -339,6 +363,7 @@ impl InputRefusalReason {
             "INPUT_REFUSAL_REASON_RESOURCE_LIMIT" => Some(Self::ResourceLimit),
             "INPUT_REFUSAL_REASON_HOST_EXITING" => Some(Self::HostExiting),
             "INPUT_REFUSAL_REASON_AGENT_RUNTIME_CHANGED" => Some(Self::AgentRuntimeChanged),
+            "INPUT_REFUSAL_REASON_UNSUBMITTED_DRAFT" => Some(Self::UnsubmittedDraft),
             _ => None,
         }
     }

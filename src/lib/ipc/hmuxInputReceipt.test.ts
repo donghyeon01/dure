@@ -36,6 +36,43 @@ describe("Hmux input receipt parsing", () => {
 		).toThrow("input_receipt_invalid");
 	});
 
+	it("parses one atomic draft-guarded receipt only when the guard was requested", () => {
+		const atomic = {
+			terminalEpoch: "terminal-1",
+			text: { state: "written_to_pty", recordId: "7" },
+			submit: { state: "written_to_pty", recordId: "7" },
+			atomic: true,
+		};
+		expect(
+			parseHmuxCommandInputReceipt(atomic, {
+				terminalEpoch: "terminal-1",
+				text: true,
+				submit: true,
+				atomic: true,
+			}),
+		).toEqual(atomic);
+		expect(() =>
+			parseHmuxCommandInputReceipt(atomic, {
+				terminalEpoch: "terminal-1",
+				text: true,
+				submit: true,
+			}),
+		).toThrow("input_receipt_invalid");
+		for (const receipt of [
+			{ ...atomic, atomic: undefined },
+			{ ...atomic, submit: { state: "written_to_pty", recordId: "8" } },
+		]) {
+			expect(() =>
+				parseHmuxCommandInputReceipt(receipt, {
+					terminalEpoch: "terminal-1",
+					text: true,
+					submit: true,
+					atomic: true,
+				}),
+			).toThrow("input_receipt_invalid");
+		}
+	});
+
 	it("returns a typed boundary error when a requested submit receipt is missing", () => {
 		try {
 			parseHmuxCommandInputReceipt(

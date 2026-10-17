@@ -38,7 +38,9 @@ const HMUX_REHOST_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_CONVERSION_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_STOP_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const HMUX_CLEANUP_EXITED_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const HMUX_INPUT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// Covers a draft-guarded send's bounded Host wait (at most 60 s) plus the
+// ordinary delivery budget, so a waiting send is never cut off mid-write.
+const HMUX_INPUT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 const HMUX_REMOTE_SHELL_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const SPAWN_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const WORKSPACE_IMPORT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
@@ -64,6 +66,7 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "agent.launch_preference_v1",
     "agent.launch_account_v1",
     "agent.run_background_v1",
+    "hmux.input.draft_guard_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -2622,7 +2625,8 @@ mod tests {
                 "unopened_agents.visibility_v1",
                 "agent.launch_preference_v1",
                 "agent.launch_account_v1",
-                "agent.run_background_v1"
+                "agent.run_background_v1",
+                "hmux.input.draft_guard_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

@@ -105,6 +105,10 @@ if (DEPRECATED_COMMANDS.has(invokedCommand) && !checkpointHookInvocation) {
 const MINIMUM_MANAGED_READ_HMUX_VERSION = [0, 2, 2];
 const MANAGED_READ_HMUX_CAPABILITY = "bounded_screen_read_v1";
 const MANAGED_INPUT_HMUX_CAPABILITY = "semantic_command_input_v1";
+// `hmux command-input --draft-guard-wait-ms`: one Host transaction that is
+// refused, unwritten, while the target terminal holds an unsubmitted draft.
+const MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY = "draft_guarded_command_input_v1";
+const APP_INPUT_DRAFT_GUARD_CAPABILITY = "hmux.input.draft_guard_v1";
 const MANAGED_INPUT_CAPABILITY_TIMEOUT_MS = 2_500;
 // Native command input owns a ten-second receipt deadline after attachment.
 // Leave time for discovery/handshake and for its typed outcome to reach stdout.
@@ -547,9 +551,35 @@ function inspectManagedInputCompatibility() {
     managedInputCompatible:
       commandSucceeded(result) &&
       supportsHmuxCapability(payload, MANAGED_INPUT_HMUX_CAPABILITY),
+    draftGuardCompatible:
+      commandSucceeded(result) &&
+      supportsHmuxCapability(payload, MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY),
     detail: commandDetail(result),
   };
   return hmuxManagedInputInspection;
+}
+
+/** Whether this hmux can carry the requested input; a draft-guarded send
+ * never falls back to ordinary paste-then-Enter input. */
+function managedInputDirectCompatible(compatibility, draftGuard) {
+  return compatibility.managedInputCompatible &&
+    (!draftGuard || compatibility.draftGuardCompatible);
+}
+
+/** Actionable guidance for the two stable draft-guard refusal codes. */
+function draftGuardGuidance(code, draftGuard) {
+  if (code === "hmux_input_draft_pending") {
+    return ` The target terminal still has unsubmitted input from its user` +
+      `${draftGuard ? ` after waiting ${draftGuard.waitMs / 1000}s` : ""}, so nothing was sent.` +
+      " Retry later (raise --draft-wait to wait longer), or use --track to queue a durable message.";
+  }
+  if (code === "hmux_input_draft_guard_unavailable") {
+    return " The target's Hmux runtime predates draft-guarded input, so Dure cannot rule out" +
+      " unsubmitted user input there and nothing was sent. Restart or rehost the target session" +
+      " to update its runtime, or resend with --ignore-draft to accept that the text may merge" +
+      " with what the user is typing.";
+  }
+  return "";
 }
 
 async function inspectHmuxCompatibilityBounded(signal) {
@@ -674,7 +704,7 @@ function localHmuxBinding(agent) {
     : null;
 }
 
-function sendManagedInputDirect(binding, text, enter) {
+function sendManagedInputDirect(binding, text, enter, draftGuard) {
   const expectedFenceJson = managedInputFenceJson(binding);
   if (!expectedFenceJson) {
     return {
@@ -697,8 +727,9 @@ function sendManagedInputDirect(binding, text, enter) {
       "--text",
       text,
       ...(enter === false ? [] : ["--submit"]),
+      ...(draftGuard ? ["--draft-guard-wait-ms", String(draftGuard.waitMs)] : []),
     ],
-    { capture: true, timeoutMs: MANAGED_INPUT_TIMEOUT_MS },
+    { capture: true, timeoutMs: MANAGED_INPUT_TIMEOUT_MS + (draftGuard?.waitMs ?? 0) },
   );
   if (result.status !== 0) {
     let failure;
@@ -709,9 +740,10 @@ function sendManagedInputDirect(binding, text, enter) {
       typeof failure?.error?.code === "string" ? failure.error.code : null;
     const detail = code
       ? `${code}: ${failure.error.message || "Managed Hmux input was rejected"}` +
-        (typeof failure.error.deliveryState === "string" ? ` (deliveryState=${failure.error.deliveryState})` : "")
+        (typeof failure.error.deliveryState === "string" ? ` (deliveryState=${failure.error.deliveryState})` : "") +
+        draftGuardGuidance(code, draftGuard)
       : result.error?.code === "ETIMEDOUT"
-        ? `hmux_command_input_process_timeout: stage=process_watchdog deadlineMs=${MANAGED_INPUT_TIMEOUT_MS} deliveryState=outcome_unknown. ` +
+        ? `hmux_command_input_process_timeout: stage=process_watchdog deadlineMs=${MANAGED_INPUT_TIMEOUT_MS + (draftGuard?.waitMs ?? 0)} deliveryState=outcome_unknown. ` +
           "Hmux did not return a final receipt; the message may already have reached the terminal. " +
           "Inspect the target with dure read and dure inspect before sending again. Input was not retried."
       : result.stderr?.trim() ||
@@ -735,6 +767,7 @@ function sendManagedInputDirect(binding, text, enter) {
       text,
       enter !== false,
       binding.stopFence.terminalEpoch,
+      Boolean(draftGuard),
     )
   ) {
     return {
@@ -752,11 +785,14 @@ function sendManagedInputDirect(binding, text, enter) {
   };
 }
 
+/** An ordinary receipt has text then submit as consecutive records; a
+ * draft-guarded receipt is one atomic Host record shared by both. */
 function validSemanticCommandInputReceipt(
   receipt,
   text,
   submit,
   expectedTerminalEpoch,
+  atomic = false,
 ) {
   const writtenRecordId = (value) =>
     value?.state === "written_to_pty" &&
@@ -773,9 +809,10 @@ function validSemanticCommandInputReceipt(
       receipt.terminalEpoch === expectedTerminalEpoch) &&
     (text.length > 0 ? textRecordId !== null : receipt.text == null) &&
     (submit ? submitRecordId !== null : receipt.submit == null) &&
+    (atomic ? receipt.atomic === true : receipt.atomic == null) &&
     (textRecordId === null ||
       submitRecordId === null ||
-      submitRecordId === textRecordId + 1n)
+      submitRecordId === (atomic ? textRecordId : textRecordId + 1n))
   );
 }
 
@@ -849,10 +886,14 @@ async function sendExactSession(sessionId, text, opts) {
       ...(opts.deadlineMs === undefined ? {} : { deadlineMs: Number(opts.deadlineMs) }),
     });
   } catch (error) { fail(error.message); }
-  if (!inspectManagedInputCompatibility().managedInputCompatible) {
+  const compatibility = inspectManagedInputCompatibility();
+  if (!compatibility.managedInputCompatible) {
     fail(`Exact Session input requires the ${MANAGED_INPUT_HMUX_CAPABILITY} capability. Update the selected Hmux runtime.`);
   }
-  const direct = sendManagedInputDirect(binding, text, opts.enter);
+  if (!managedInputDirectCompatible(compatibility, opts.draftGuard)) {
+    fail(`hmux_input_draft_guard_unavailable: the selected hmux lacks ${MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY}. Nothing was sent. Update Hmux, or resend with --ignore-draft.`);
+  }
+  const direct = sendManagedInputDirect(binding, text, opts.enter, opts.draftGuard);
   if (direct.kind !== "success") fail(direct.detail);
   return direct.input;
 }
@@ -864,6 +905,7 @@ async function sendText(
   enter,
   windowLabel,
   requestedIdempotencyKey,
+  draftGuard,
 ) {
 	if (agent.interactionProfile != null) {
 		const { sendStructuredAgentInput } = await import("./lib/structured-agent-input.mjs");
@@ -893,8 +935,8 @@ async function sendText(
       requestedIdempotencyKey === undefined
     ) {
       const compatibility = inspectManagedInputCompatibility();
-      if (compatibility.managedInputCompatible) {
-        const direct = sendManagedInputDirect(binding, text, enter);
+      if (managedInputDirectCompatible(compatibility, draftGuard)) {
+        const direct = sendManagedInputDirect(binding, text, enter, draftGuard);
         if (direct.kind === "success") return direct.input;
         fail(direct.detail);
       }
@@ -918,7 +960,13 @@ async function sendText(
           );
         }
       }
+      if (draftGuard && inspectManagedInputCompatibility().managedInputCompatible) {
+        fail(`hmux_input_draft_guard_unavailable: the selected hmux lacks ${MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY} and the Dure app is not running. Nothing was sent. Update Hmux, or resend with --ignore-draft.`);
+      }
       fail("The app server was not found. Reopen or migrate this legacy Hmux binding.");
+    }
+    if (draftGuard && !(Array.isArray(srv.capabilities) && srv.capabilities.includes(APP_INPUT_DRAFT_GUARD_CAPABILITY))) {
+      fail("hmux_input_draft_guard_unavailable: the running Dure app predates draft-guarded input. Nothing was sent. Restart the updated Dure app, or resend with --ignore-draft.");
     }
     const idempotencyKey = requestedIdempotencyKey ?? randomUUID();
     const body = {
@@ -933,6 +981,7 @@ async function sendText(
       enter: enter !== false,
       idempotencyKey,
     };
+    if (draftGuard) body.draftGuardWaitMs = draftGuard.waitMs;
     if (windowLabel) body.windowLabel = windowLabel;
     const request = async () => {
       try {
@@ -962,8 +1011,10 @@ async function sendText(
     }
     const { res, response } = attempt;
     if (!res.ok || !response?.ok) {
+      const code = typeof response?.error?.code === "string" ? response.error.code : "";
+      const guidance = draftGuardGuidance(code, draftGuard);
       fail(
-        `${response?.error?.message || `Managed Hmux input was rejected (HTTP ${res.status})`} (idempotency key: ${idempotencyKey})`,
+        `${guidance ? `${code}: ` : ""}${response?.error?.message || `Managed Hmux input was rejected (HTTP ${res.status})`} (idempotency key: ${idempotencyKey})${guidance}`,
       );
     }
     if (
@@ -971,6 +1022,8 @@ async function sendText(
         response.input?.receipt,
         text,
         enter !== false,
+        undefined,
+        Boolean(draftGuard),
       )
     ) {
       fail(

@@ -347,6 +347,7 @@ mod tests {
             input: true,
             agent_prompt: Some(AgentPromptCapabilitySelection::Targeted),
             process_observed_agent_prompt: true,
+            draft_guarded_input: false,
             wheel,
             default_colors: false,
             base_protocol_minor: hmux_runtime_contract::TERMINAL_STATE_BASE_PROTOCOL_MINOR,
@@ -409,6 +410,63 @@ mod tests {
             decode_upstream(&agent_prompt_envelope(target), legacy).unwrap(),
             StructuredUpstream::Unauthorized(hmux_host::local_protocol::AGENT_PROMPT_CAPABILITY)
         ));
+    }
+
+    fn draft_guarded_envelope() -> Vec<u8> {
+        let minor = hmux_runtime_contract::TERMINAL_STATE_BASE_PROTOCOL_MINOR;
+        encode_record_for_minor(
+            minor,
+            10,
+            &TerminalStateRecord {
+                schema_minor: u32::from(minor),
+                terminal_epoch: "terminal-a".into(),
+                through_output_seq: 3,
+                state_revision: 4,
+                body: Some(terminal_state_record::Body::InputIntent(InputIntent {
+                    intent: Some(input_intent::Intent::DraftGuarded(
+                        terminal_state_protocol::DraftGuardedInputIntent {
+                            utf8: b"report".to_vec(),
+                            submit: true,
+                            admission_wait_ms: 250,
+                        },
+                    )),
+                })),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn draft_guarded_input_requires_its_capability_and_never_degrades_to_ordinary() {
+        assert!(matches!(
+            decode_upstream(&draft_guarded_envelope(), permissions(false)).unwrap(),
+            StructuredUpstream::Unauthorized(
+                hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
+            )
+        ));
+
+        let mut reader_only = permissions(false);
+        reader_only.input = false;
+        reader_only.draft_guarded_input = true;
+        assert!(matches!(
+            decode_upstream(&draft_guarded_envelope(), reader_only).unwrap(),
+            StructuredUpstream::Unauthorized(
+                hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
+            )
+        ));
+
+        let mut selected = permissions(false);
+        selected.draft_guarded_input = true;
+        let StructuredUpstream::Input { admission, .. } =
+            decode_upstream(&draft_guarded_envelope(), selected).unwrap()
+        else {
+            panic!("a negotiated draft guard must admit the guarded record")
+        };
+        assert_eq!(
+            admission.draft_guard_wait(),
+            Some(std::time::Duration::from_millis(250))
+        );
+        assert!(admission.agent_prompt().is_none());
     }
 
     #[test]

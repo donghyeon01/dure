@@ -506,6 +506,7 @@ export async function remoteHmuxCommandInput(input: {
 	session: RemoteHmuxCatalogReceiptV1["sessions"][number];
 	text: string;
 	submit: boolean;
+	draftGuardWaitMs?: number;
 }): Promise<HmuxCommandInputReceipt> {
 	if (!(await backendSupports(BACKEND_FEATURES.hmuxRemoteExactInput))) {
 		throw new Error("remote_hmux_exact_input_backend_unavailable");
@@ -517,6 +518,9 @@ export async function remoteHmuxCommandInput(input: {
 			submit: input.submit,
 			session: input.session,
 			target,
+			...(input.draftGuardWaitMs === undefined
+				? {}
+				: { draftGuardWaitMs: input.draftGuardWaitMs }),
 		},
 	});
 	if (!value || typeof value !== "object") {
@@ -534,6 +538,7 @@ export async function remoteHmuxCommandInput(input: {
 		terminalEpoch: input.session.terminalEpoch,
 		text: input.text.length > 0,
 		submit: input.submit,
+		atomic: input.draftGuardWaitMs !== undefined,
 	});
 }
 

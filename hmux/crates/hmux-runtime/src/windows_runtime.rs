@@ -191,6 +191,10 @@ fn advertised_capabilities() -> Vec<String> {
             TERMINAL_VIEWPORT_WHEEL_CAPABILITY,
             TERMINAL_VIEWPORT_MULTIPART_CAPABILITY,
             hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY,
+            // The shared input transaction rechecks the draft under the Host
+            // lock before the first byte; this Host refuses without waiting
+            // and the client retries within its own bounded budget.
+            hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
         ]
         .map(str::to_string),
     );
@@ -2624,6 +2628,12 @@ fn serve_client(
                     requested,
                 )
                 && (requested.as_str() != TERMINAL_DEFAULT_COLORS_CAPABILITY
+                    || hello
+                        .requested_capabilities
+                        .iter()
+                        .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY))
+                && (requested.as_str()
+                    != hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
                     || hello
                         .requested_capabilities
                         .iter()

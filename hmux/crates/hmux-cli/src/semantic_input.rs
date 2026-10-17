@@ -9,6 +9,10 @@ use hmux_client::{
 };
 use std::time::Duration;
 
+/// `command-input --draft-guard-wait-ms` is available. The guard itself is
+/// negotiated with each target Host when the writer attaches.
+pub(super) const DRAFT_GUARDED_COMMAND_INPUT_CAPABILITY: &str = "draft_guarded_command_input_v1";
+
 #[derive(Args, Debug)]
 pub(super) struct CommandInputArgs {
     /// Session name, exact id, or unique printed id prefix.
@@ -30,6 +34,18 @@ pub(super) struct CommandInputArgs {
     /// Send one semantic Enter key after the text receipt is written to the PTY.
     #[arg(long)]
     pub(super) submit: bool,
+
+    /// Write text and submit as one Host transaction admitted only while the
+    /// terminal has no unsubmitted controller draft, waiting up to MS
+    /// (0-60000) for a person to submit theirs. Refuses with nothing written
+    /// when the draft remains or the Host does not negotiate the guard.
+    #[arg(
+        long,
+        value_name = "MS",
+        conflicts_with = "keys",
+        value_parser = clap::value_parser!(u32).range(..=i64::from(terminal_state_protocol::MAX_DRAFT_GUARD_ADMISSION_WAIT_MS))
+    )]
+    pub(super) draft_guard_wait_ms: Option<u32>,
 
     /// Named key (repeat for an ordered batch of up to 64). Host chooses the encoding.
     #[arg(long = "key", conflicts_with_all = ["text", "submit"])]
@@ -129,19 +145,31 @@ pub(super) fn execute(
         }
         return Ok(());
     }
-    let receipt =
-        match surface.send_command_input_confirmed(args.text, args.submit, Duration::from_secs(10))
-        {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                return managed_mutation_failure(
-                    json,
-                    error.code(),
-                    error.to_string(),
-                    error.delivery_state(),
-                );
-            }
-        };
+    let sent = match args.draft_guard_wait_ms {
+        Some(wait_ms) => {
+            let draft_wait = Duration::from_millis(u64::from(wait_ms));
+            surface.send_draft_guarded_command_input_confirmed(
+                args.text,
+                args.submit,
+                draft_wait,
+                draft_wait + Duration::from_secs(10),
+            )
+        }
+        None => {
+            surface.send_command_input_confirmed(args.text, args.submit, Duration::from_secs(10))
+        }
+    };
+    let receipt = match sent {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return managed_mutation_failure(
+                json,
+                error.code(),
+                error.to_string(),
+                error.delivery_state(),
+            );
+        }
+    };
     let _ = surface.detach();
     if json {
         crate::output::writeln(format_args!(
@@ -168,11 +196,16 @@ fn command_input_receipt_json(receipt: &TerminalCommandInputReceipt) -> serde_js
             })
         })
     };
-    serde_json::json!({
+    let mut projected = serde_json::json!({
         "terminalEpoch": receipt.terminal_epoch(),
         "text": record(receipt.text()),
         "submit": record(receipt.submit()),
-    })
+    });
+    if receipt.atomic() {
+        // Text and submit share one draft-guarded Host record.
+        projected["atomic"] = true.into();
+    }
+    projected
 }
 
 #[cfg(test)]
@@ -196,6 +229,7 @@ mod tests {
                 expected_fence_json: None,
                 text: String::new(),
                 submit: false,
+                draft_guard_wait_ms: None,
                 keys,
             };
             assert!(

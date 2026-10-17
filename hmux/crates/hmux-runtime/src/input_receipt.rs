@@ -80,6 +80,9 @@ pub(crate) fn not_written(
         OperationReceiptReason::AgentRuntimeChanged => {
             refused(record_id, InputRefusalReason::AgentRuntimeChanged, None)
         }
+        OperationReceiptReason::UnsubmittedDraft => {
+            refused(record_id, InputRefusalReason::UnsubmittedDraft, None)
+        }
         OperationReceiptReason::ResourceLimit => {
             refused(record_id, InputRefusalReason::ResourceLimit, detail)
         }
@@ -156,6 +159,10 @@ mod tests {
             (
                 OperationReceiptReason::AgentRuntimeChanged,
                 InputRefusalReason::AgentRuntimeChanged,
+            ),
+            (
+                OperationReceiptReason::UnsubmittedDraft,
+                InputRefusalReason::UnsubmittedDraft,
             ),
         ] {
             let receipt = not_written(11, operation, None);

@@ -45,7 +45,7 @@ use crate::hmux::{
     ManagedRehostTargetReceipt,
 };
 use crate::hmux_input_contract::{
-    project_command_input_receipt, send_fresh_agent_prompt, HmuxCommandInputReceipt,
+    send_command_input, send_fresh_agent_prompt, HmuxCommandInputReceipt,
     HmuxInitialAgentPromptReceipt, HmuxInputFailure,
 };
 use crate::managed_create_resolution::{
@@ -323,6 +323,8 @@ pub(crate) struct RemoteHmuxCommandInputRequest {
     submit: bool,
     session: RemoteHmuxCatalogSession,
     target: RemoteHmuxTargetRequest,
+    #[serde(default)]
+    draft_guard_wait_ms: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -1009,10 +1011,13 @@ pub(crate) async fn remote_hmux_command_input(
             TerminalSurfaceAccess::Writer,
         )
         .map_err(|error| HmuxInputFailure::not_written(error.code(), error.to_string()))?;
-        let receipt = surface
-            .send_command_input_confirmed(request.text, request.submit, INPUT_TIMEOUT)
-            .map_err(HmuxInputFailure::from_command_input)?;
-        let projected = project_command_input_receipt(&receipt);
+        let projected = send_command_input(
+            &mut surface,
+            request.text,
+            request.submit,
+            request.draft_guard_wait_ms,
+            INPUT_TIMEOUT,
+        )?;
         let _ = surface.detach();
         Ok::<_, HmuxInputFailure>(projected)
     })

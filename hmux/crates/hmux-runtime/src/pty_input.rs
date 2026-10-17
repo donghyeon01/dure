@@ -80,6 +80,23 @@ pub(crate) fn apply_pty_input(
         }
     }
 
+    #[cfg(feature = "terminal-state-stream")]
+    if let Some(reason) = admission
+        .draft_guard_wait()
+        .map(|wait| wait_for_submitted_controller_draft(state, wait))
+        .transpose()?
+        .flatten()
+    {
+        let controller_generation = lock(&state.host)?.controller_generation();
+        return Ok(InputApplication {
+            controller_generation,
+            outcome: InputTransactionOutcome::NotWritten(reason),
+            detail: None,
+            input_baseline_output_sequence: None,
+            admitted_agent_runtime_revision: None,
+        });
+    }
+
     let _input = lock_pty_writer_preserving_liveness(&state.pty_input_serial, "input frame");
     let mut prepared: Option<PreparedInput<'_>> = None;
     let mut mutation_generation = requested_controller_generation;
@@ -230,6 +247,41 @@ pub(crate) fn apply_pty_input(
             ));
         }
     }
+}
+
+/// Waits, outside the PTY writer, until no unsubmitted controller draft is
+/// pending. Every accepted PTY write and runtime change wakes the waiter; the
+/// authoritative Host fact is re-read each time. The serialized writer
+/// rechecks the same fact before the first byte, so this wait only spares a
+/// sender an early refusal while a person finishes typing.
+#[cfg(feature = "terminal-state-stream")]
+fn wait_for_submitted_controller_draft(
+    state: &ServerState,
+    wait: std::time::Duration,
+) -> Result<Option<OperationReceiptReason>> {
+    use crate::agent_prompt_admission::AgentPromptWaitOutcome;
+    use hmux_host::terminal_replay::AgentPromptAdmission;
+
+    let host_exiting = || {
+        state.termination_requested.load(Ordering::Acquire)
+            || state.provider_exit_observed.load(Ordering::Acquire)
+    };
+    let waited = state.agent_prompt_admission.wait(wait, || {
+        if host_exiting() {
+            return Ok(AgentPromptAdmission::Refused);
+        }
+        let host = lock(&state.host)?;
+        Ok(match host.has_unsubmitted_controller_draft(&state.fence) {
+            Ok(true) => AgentPromptAdmission::Pending,
+            Ok(false) => AgentPromptAdmission::Eligible,
+            Err(_) => AgentPromptAdmission::Refused,
+        })
+    })?;
+    Ok(match waited {
+        AgentPromptWaitOutcome::Ready => None,
+        AgentPromptWaitOutcome::TimedOut => Some(OperationReceiptReason::UnsubmittedDraft),
+        AgentPromptWaitOutcome::Refused => Some(OperationReceiptReason::HostExiting),
+    })
 }
 
 fn wait_for_pty_input(state: &ServerState) -> std::io::Result<()> {

@@ -177,11 +177,20 @@ impl TerminalReplay {
     pub fn record_controller_input(&mut self) {
         self.record_controller_write();
         self.pending_controller_input = PendingControllerInput::Draft;
+        self.unsubmitted_controller_draft = true;
     }
 
     #[must_use]
     pub fn has_pending_controller_input(&self) -> bool {
         self.pending_controller_input != PendingControllerInput::None
+    }
+
+    /// Whether draft-capable input reached the PTY after its last submit.
+    /// Line editors may erase text without echoing it, so this conservatively
+    /// remains set until the next accepted submit.
+    #[must_use]
+    pub fn has_unsubmitted_controller_draft(&self) -> bool {
+        self.unsubmitted_controller_draft
     }
 
     pub(crate) fn is_semantically_quiescent(&self) -> bool {
@@ -206,6 +215,9 @@ impl TerminalReplay {
         &mut self,
     ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
         self.record_controller_write();
+        // The submit bytes already crossed the PTY boundary, so the draft is
+        // no longer unsubmitted even if the fallible provider fold fails.
+        self.unsubmitted_controller_draft = false;
         if self.pending_turn_completion.is_some()
             || self.agent_runtime_state.as_ref().is_some_and(|state| {
                 matches!(

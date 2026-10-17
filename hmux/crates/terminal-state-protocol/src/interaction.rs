@@ -8,6 +8,9 @@ use super::{
 };
 
 pub const MAX_AGENT_PROMPT_ADMISSION_WAIT_MS: u32 = 10_000;
+/// Upper bound for one Host wait on an unsubmitted controller draft. A person
+/// may compose for longer; the sender then receives a not-written refusal.
+pub const MAX_DRAFT_GUARD_ADMISSION_WAIT_MS: u32 = 60_000;
 
 pub(crate) fn validate_event(event: &TerminalEvent) -> Result<(), ProtocolError> {
     if event.event_id == 0 {
@@ -116,6 +119,26 @@ pub fn validate_input_intent(intent: &InputIntent) -> Result<(), ProtocolError> 
                 // legacy fresh target or rejects it before PTY admission.
                 None => Ok(()),
             }
+        }
+        Some(input_intent::Intent::DraftGuarded(value)) => {
+            validate_bytes(
+                &value.utf8,
+                0,
+                MAX_INPUT_BYTES - 1,
+                "draft-guarded input is oversized",
+            )?;
+            validate_utf8(&value.utf8, "draft-guarded input is not UTF-8")?;
+            if value.utf8.is_empty() && !value.submit {
+                return Err(ProtocolError::InvalidRecord(
+                    "draft-guarded input requires text, submit, or both",
+                ));
+            }
+            if value.admission_wait_ms > MAX_DRAFT_GUARD_ADMISSION_WAIT_MS {
+                return Err(ProtocolError::InvalidRecord(
+                    "draft-guarded admission wait is oversized",
+                ));
+            }
+            Ok(())
         }
         Some(input_intent::Intent::Key(value)) => {
             validate_text(&value.key, 1, 128, "key is empty or oversized")?;

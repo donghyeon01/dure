@@ -70,6 +70,21 @@ impl<'a> PreparedInput<'a> {
         scanner: &mut SubmitScanner,
         write: impl FnOnce(&[u8]) -> PtyWriteOutcome,
     ) -> Result<InputStep, InputTransactionFailure> {
+        // The caller holds the serialized PTY input frame here, so no other
+        // keystroke can land between this check and the first written byte.
+        #[cfg(feature = "terminal-state-stream")]
+        if self.written == 0
+            && self.admission.draft_guard_wait().is_some()
+            && host
+                .has_unsubmitted_controller_draft(fence)
+                .map_err(InputTransactionFailure::before_write)?
+        {
+            return Ok(InputStep::Complete(InputTransaction {
+                outcome: self.failure(OperationReceiptReason::UnsubmittedDraft),
+                runtime_state: None,
+                admitted_agent_runtime_revision: None,
+            }));
+        }
         #[cfg(feature = "terminal-state-stream")]
         let prepared_revision = if self.written == 0 {
             if let Some((target, _)) = self.admission.agent_prompt() {

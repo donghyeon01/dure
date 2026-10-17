@@ -107,6 +107,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     managed_rehost_execution::START_CAPABILITY,
     managed_rehost_identity::CAPABILITY,
     "semantic_command_input_v1",
+    semantic_input::DRAFT_GUARDED_COMMAND_INPUT_CAPABILITY,
     semantic_keys::CAPABILITY,
     "session_inspection_v1",
     hmux_client::SESSION_FILE_ROUTE_CAPABILITY,
@@ -140,6 +141,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     managed_rehost_execution::START_CAPABILITY,
     managed_rehost_identity::CAPABILITY,
     "semantic_command_input_v1",
+    semantic_input::DRAFT_GUARDED_COMMAND_INPUT_CAPABILITY,
     semantic_keys::CAPABILITY,
     "session_liveness_v1",
     "session_inspection_v1",
@@ -3862,6 +3864,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_bounded_draft_guard_for_command_input() {
+        let cli = Cli::try_parse_from([
+            "hmux",
+            "command-input",
+            "--target",
+            "session-1",
+            "--text",
+            "lane report",
+            "--submit",
+            "--draft-guard-wait-ms",
+            "30000",
+        ])
+        .unwrap();
+        let Command::AutomationInput(args) = cli.command else {
+            panic!("expected command-input")
+        };
+        assert_eq!(args.draft_guard_wait_ms, Some(30_000));
+        for rejected in [
+            vec!["--draft-guard-wait-ms", "60001"],
+            vec!["--draft-guard-wait-ms", "-1"],
+            vec!["--key", "Enter", "--draft-guard-wait-ms", "0"],
+        ] {
+            let mut arguments = vec!["hmux", "command-input", "--target", "session-1"];
+            arguments.extend(rejected);
+            assert!(
+                Cli::try_parse_from(&arguments).is_err(),
+                "accepted {arguments:?}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_generation_fenced_semantic_command_input() {
         let descriptor = descriptor();
         let expected = SessionFence {
@@ -4112,6 +4146,7 @@ mod tests {
         assert!(CLI_CAPABILITIES.contains(&"managed_rehost_exact_fence_v1"));
         assert!(CLI_CAPABILITIES.contains(&"managed_rehost_resolution_v1"));
         assert!(CLI_CAPABILITIES.contains(&"semantic_command_input_v1"));
+        assert!(CLI_CAPABILITIES.contains(&"draft_guarded_command_input_v1"));
         assert!(CLI_CAPABILITIES.contains(&"pairing_v1"));
         assert!(CLI_CAPABILITIES.contains(&"pairing_revoke_inventory_v1"));
         #[cfg(unix)]
