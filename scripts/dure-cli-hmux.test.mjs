@@ -333,7 +333,9 @@ describe("Dure Hmux IDE CLI", () => {
       colorCapableEnvironment({ HOME: home }),
     );
 
-    expect(result).toMatchObject({ code: 0, stderr: "" });
+    // This fixture app advertises no draft guard, so the send is unguarded.
+    expect(result).toMatchObject({ code: 0 });
+    expect(result.stderr).toContain("the running Dure app predates draft-guarded input");
     expect(result.stdout).toContain("receipt 10");
     expect(request).toEqual({
       method: "POST",
@@ -518,7 +520,9 @@ describe("Dure Hmux IDE CLI", () => {
       isolatedEnvironment({ HOME: home }),
     );
 
-    expect(result).toMatchObject({ code: 0, stderr: "" });
+    // This fixture app advertises no draft guard, so the send is unguarded.
+    expect(result).toMatchObject({ code: 0 });
+    expect(result.stderr).toContain("the running Dure app predates draft-guarded input");
     expect(result.stdout).toContain("receipt 42");
     expect(request).toEqual({
       url: "/hmux/input",
