@@ -134,6 +134,21 @@ test("release admission is manual, canonical-main-only and read-only by default"
   expect(selection.with.overwrite).not.toBe(true);
 });
 
+test("self-hosted toolchain installs keep rustup away from the runner user's profiles", () => {
+  for (const name of ["verification", "build"]) {
+    const steps = workflow.jobs[name].steps;
+    const isolate = steps.find((step) => step.name === "Isolate Cargo home");
+    expect(isolate.env.HEBBIAN_CI_RUNNER_TEMP).toBe("${{ runner.temp }}");
+    const toolchain = steps.find((step) =>
+      step.uses?.startsWith("dtolnay/rust-toolchain@"),
+    );
+    expect(toolchain.env?.HOME).toBe(
+      "${{ runner.temp }}/hebbian-rustup-profile-home",
+    );
+    expect(steps.indexOf(isolate)).toBeLessThan(steps.indexOf(toolchain));
+  }
+});
+
 test("public PR checks remain on hosted runners with no signing secrets", () => {
   const publicCI = YAML.parse(
     fs.readFileSync(".github/workflows/public-repository.yml", "utf8"),

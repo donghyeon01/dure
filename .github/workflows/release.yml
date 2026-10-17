@@ -143,8 +143,11 @@ jobs:
         env:
           CARGO_HOME: ${{ runner.temp }}/hebbian-cargo-home
           CARGO_TARGET_DIR: ""
+          HEBBIAN_CI_RUNNER_TEMP: ${{ runner.temp }}
         run: sh scripts/prepare-ci-cargo-home.sh
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        env:
+          HOME: ${{ runner.temp }}/hebbian-rustup-profile-home
         with:
           toolchain: 1.97.1
           components: rustfmt, clippy
@@ -269,6 +272,8 @@ jobs:
           HEBBIAN_CI_RUNNER_TEMP: ${{ runner.temp }}
         run: sh scripts/prepare-ci-cargo-home.sh
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        env:
+          HOME: ${{ runner.temp }}/hebbian-rustup-profile-home
         with:
           toolchain: 1.97.1
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl

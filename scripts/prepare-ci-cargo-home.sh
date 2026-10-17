@@ -61,6 +61,21 @@ printf '%s:%s:%s\n' \
   "${GITHUB_JOB:-unknown}" \
   >"$cargo_home/.hebbian-ci-owner"
 
+# A self-hosted runner shares its user's HOME. When this Cargo home has no
+# rustup, the toolchain action runs rustup-init, which appends
+# `. "$CARGO_HOME/env"` to the shell profiles in HOME; that file is removed
+# with the runner temp. The workflow runs that action with this runner-owned
+# HOME, and RUSTUP_HOME keeps the host's existing toolchain store.
+profile_home="$runner_temp/hebbian-rustup-profile-home"
+[ ! -L "$profile_home" ] || fail "rustup profile home must not be a symlink"
+mkdir -p "$profile_home"
+chmod 700 "$profile_home"
+
 printf 'CARGO_HOME=%s\n' "$cargo_home_real" >>"$github_env"
+if [ -n "${RUSTUP_HOME:-}" ]; then
+  printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >>"$github_env"
+elif [ -n "${HOME:-}" ]; then
+  printf 'RUSTUP_HOME=%s\n' "$HOME/.rustup" >>"$github_env"
+fi
 
 echo "Cargo home isolated under runner temp"

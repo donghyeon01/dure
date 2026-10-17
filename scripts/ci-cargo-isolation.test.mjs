@@ -49,6 +49,7 @@ function runPrepare({ cargoHome, home, runnerTemp }) {
       GITHUB_RUN_ID: "12345",
       HEBBIAN_CI_RUNNER_TEMP: runnerTemp,
       HOME: home,
+      RUSTUP_HOME: undefined,
     },
   });
   return { ...result, githubEnvironment };
@@ -81,9 +82,14 @@ describe("isolated Cargo home preparation", () => {
       fs.readFileSync(path.join(cargoHome, ".hebbian-ci-owner"), "utf8"),
     ).toBe("12345:2:verify\n");
     expect(fs.readFileSync(result.githubEnvironment, "utf8")).toBe(
-      `CARGO_HOME=${fs.realpathSync(cargoHome)}\n`,
+      `CARGO_HOME=${fs.realpathSync(cargoHome)}\nRUSTUP_HOME=${home}/.rustup\n`,
     );
     expect(fs.statSync(cargoHome).mode & 0o777).toBe(0o700);
+    // rustup-init edits the profiles in the HOME it runs with; the toolchain
+    // step uses this runner-owned one instead of the runner user's.
+    const profileHome = path.join(runnerTemp, "hebbian-rustup-profile-home");
+    expect(fs.statSync(profileHome).mode & 0o777).toBe(0o700);
+    expect(fs.readdirSync(home)).toEqual([".cargo"]);
   });
 
   test("refuses a developer Cargo home without changing it", () => {
