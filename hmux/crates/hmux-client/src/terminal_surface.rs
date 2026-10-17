@@ -1217,10 +1217,13 @@ impl TerminalSurfaceAttachment {
         let terminal_epoch = self.current.terminal_epoch.clone();
         let has_text = !text.is_empty();
         let utf8 = text.into_bytes();
+        // The first attempt asks the Host for the caller's whole wait; a retry
+        // asks only for what remains of it.
+        let mut attempt_at = now;
         loop {
             let admission_wait =
                 wait_deadline
-                    .saturating_duration_since(Instant::now())
+                    .saturating_duration_since(attempt_at)
                     .min(Duration::from_millis(u64::from(
                         MAX_DRAFT_GUARD_ADMISSION_WAIT_MS,
                     )));
@@ -1262,6 +1265,7 @@ impl TerminalSurfaceAttachment {
                         && Instant::now() + DRAFT_GUARD_RETRY_INTERVAL < wait_deadline =>
                 {
                     std::thread::sleep(DRAFT_GUARD_RETRY_INTERVAL);
+                    attempt_at = Instant::now();
                 }
                 Err(error) => return Err(not_written(error)),
             }
