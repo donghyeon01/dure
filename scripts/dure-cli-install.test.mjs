@@ -15,7 +15,10 @@ import {
   promoteDureCli,
   reconcileDureCliLauncher,
 } from "../cli/lib/dure-cli-promotion.mjs";
-import { artifactDigest } from "../cli/lib/dure-cli-channel-launcher.mjs";
+import {
+  artifactDigest,
+  writeArtifactManifest,
+} from "../cli/lib/dure-cli-channel-launcher.mjs";
 import { orchestrationPayloadIdentity } from "../cli/lib/orchestration-integration-bundle.mjs";
 import { inspectCliIdentity } from "../cli/lib/runtime-diagnostics.mjs";
 import { resolveLocalBackendExecutable } from "../cli/lib/local-backend.mjs";
@@ -177,6 +180,7 @@ function prepareMockVersion(
   metadata.bundle.app.channel = channel;
   metadata.bundle.hmux.channel = channel;
   metadata.bundle.orchestration = orchestrationPayloadIdentity(script);
+  writeArtifactManifest(version);
   metadata.bundle.artifactDigest = artifactDigest(version);
   fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
   return version;
@@ -924,7 +928,9 @@ describe("Dure CLI installation", () => {
     const stableScript = path.join(installedStable, "bin", "dure.mjs");
     const stableScriptBytes = fs.readFileSync(stableScript);
     fs.appendFileSync(stableScript, "\n// tampered owner payload\n");
-    expectHandoffRefused("immutable bundle digest does not match");
+    expectHandoffRefused(expect.stringMatching(
+      /^immutable bundle digest does not match: .* \(changed: bin\/dure\.mjs\)\. Reinstall it: /,
+    ));
     expect(() =>
       reconcileDureCliLauncher({
         sourceVersionDirectory: channelVersion,
@@ -1301,6 +1307,77 @@ describe("Dure CLI installation", () => {
     expect(fs.readFileSync(installedMetadata, "utf8")).toBe("{}\n");
   });
 
+  it("names entries written into an installed build and how to restore it", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-cli-drift-"));
+    temporaryDirectories.push(root);
+    const fixtureRepository = copyInstallerFixture(root);
+    const installRoot = path.join(root, "share", "hebbian-ide-cli");
+    const commandDirectory = path.join(root, "login-bin");
+    const controlPlane = path.join(root, "dure-control-plane");
+    writeControlPlaneFixture(controlPlane);
+    execFileSync(process.execPath, ["scripts/install-dure-cli.mjs"], {
+      cwd: fixtureRepository,
+      env: dureCliInstallerFixtureEnvironment(fixtureRepository, {
+        ...fixtureEnvironment,
+        HOME: root,
+        DURE_APP_CHANNEL: "stable",
+        DURE_CLI_INSTALL_DIR: commandDirectory,
+        DURE_CLI_INSTALL_ROOT: installRoot,
+        DURE_CONTROL_PLANE_BIN: controlPlane,
+        DURE_HMUX_BIN: controlPlane,
+        DURE_HMUX_RUNTIME_BIN: controlPlane,
+        DURE_HMUX_BUILD_ID: "hmux-test-v1",
+      }),
+      stdio: "pipe",
+    });
+    const version = fs.realpathSync(path.join(installRoot, "current"));
+    const buildId = path.basename(version);
+    // Agent launches put only this directory on PATH, never bin/.
+    expect(fs.readdirSync(path.join(version, "commands"))).toEqual(["dure"]);
+    expect(fs.readlinkSync(path.join(version, "commands", "dure"))).toBe("../bin/dure");
+    const manifest = JSON.parse(fs.readFileSync(path.join(version, "artifact-manifest.json"), "utf8"));
+    expect(manifest.entries.map(([name]) => name)).toEqual(
+      expect.arrayContaining(["bin", "bin/dure.mjs", "commands", "commands/dure"]),
+    );
+    expect(manifest.entries.map(([name]) => name)).not.toContain("artifact-manifest.json");
+    const run = () => spawnSync(path.join(commandDirectory, "dure"), ["version", "--json"], {
+      encoding: "utf8",
+      env: { ...fixtureEnvironment, HOME: root, DURE_APP_CHANNEL: "stable", DURE_CLI_INSTALL_ROOT: installRoot },
+    });
+    const intact = run();
+    expect(intact.status, intact.stderr).toBe(0);
+    const reason = () => {
+      const result = run();
+      expect(result.status).toBe(2);
+      return JSON.parse(result.stderr).error.reason;
+    };
+
+    // The layout a global npm install writes when its prefix is the build.
+    const packageRoot = path.join(version, "lib", "node_modules", "fixture-tool");
+    fs.mkdirSync(path.join(packageRoot, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, "bin", "cli.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+    fs.symlinkSync("../lib/node_modules/fixture-tool/bin/cli.js", path.join(version, "bin", "fixture-tool"));
+    const added = [path.join(version, "bin", "fixture-tool"), path.join(version, "lib")];
+    expect(reason()).toBe(
+      `immutable bundle digest does not match: Dure CLI build ${buildId} in ${version} changed after installation ` +
+        "(unexpected: bin/fixture-tool, lib). These entries are not part of Dure; a global package install " +
+        "that ran with Dure's bundled Node can write them. To restore the build, " +
+        `rm -rf -- ${added.map((pathname) => `'${pathname}'`).join(" ")}`,
+    );
+    for (const pathname of added) fs.rmSync(pathname, { recursive: true });
+    expect(run().status).toBe(0);
+
+    // Dure's own files cannot be restored in place.
+    fs.appendFileSync(path.join(version, "bin", "dure.mjs"), "\n// edited\n");
+    fs.rmSync(path.join(version, "bin", "skills", "dure-browser"), { recursive: true });
+    fs.writeFileSync(path.join(version, "notes.txt"), "user file\n");
+    expect(reason()).toBe(
+      `immutable bundle digest does not match: Dure CLI build ${buildId} in ${version} changed after installation ` +
+        "(unexpected: notes.txt; missing: bin/skills/dure-browser; changed: bin/dure.mjs). " +
+        `Reinstall it: move ${fs.realpathSync(installRoot)} aside, then reopen the Dure app (or rerun the Dure CLI installation).`,
+    );
+  });
+
   it("promotes the running channel CLI into the login-shell install", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "dure-cli-promotion-"),
@@ -1428,7 +1505,12 @@ describe("Dure CLI installation", () => {
     });
     expect(missingGuide.status).toBe(2);
     expect(missingGuide.stdout).toBe("");
-    expect(JSON.parse(missingGuide.stderr)).toMatchObject({ error: { code: "cli_update_required", reason: "immutable bundle digest does not match" } });
+    expect(JSON.parse(missingGuide.stderr)).toMatchObject({ error: {
+      code: "cli_update_required",
+      reason: expect.stringMatching(
+        /^immutable bundle digest does not match: .* \(missing: bin\/skills\/dure-browser\/GUIDE\.md\)\. Reinstall it: /,
+      ),
+    } });
   });
 
   it("gives a Dure CLI bundle a new immutable identity when its bound Hmux build changes", () => {

@@ -76,10 +76,21 @@ fn bind_launch_channel(
         .to_owned();
     let directory = std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .filter(|directory| directory.join("dure").is_file());
+        .and_then(|executable| agent_command_directory(&executable));
     wrap_launch_channel(plan, channel, directory.as_deref());
     Ok(())
+}
+
+/// The installed CLI version's directory of user-facing commands, beside the
+/// `bin` directory that holds this executable. That `bin` also holds the
+/// version's private Node runtime and internal executables; on PATH they would
+/// shadow the user's toolchain, and package managers that derive a global
+/// prefix from `node` would then write into the immutable version.
+const AGENT_COMMAND_DIRECTORY: &str = "commands";
+
+pub(super) fn agent_command_directory(executable: &Path) -> Option<PathBuf> {
+    let directory = executable.parent()?.parent()?.join(AGENT_COMMAND_DIRECTORY);
+    directory.join("dure").is_file().then_some(directory)
 }
 
 pub(super) fn wrap_launch_channel(

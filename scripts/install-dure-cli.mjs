@@ -345,6 +345,15 @@ function stageSnapshotPayload(snapshotDirectory, preparedClaudeDriver) {
   for (const command of compatibilityCommands) {
     symlinkSync(canonicalCommand, join(binaryDirectory, command));
   }
+  // Managed agent launches put only this directory on PATH. The bin directory
+  // also holds the private Node runtime and internal executables, which would
+  // shadow the user's toolchain and let package managers write into the build.
+  const agentCommandDirectory = join(snapshotDirectory, "commands");
+  mkdirSync(agentCommandDirectory);
+  symlinkSync(
+    `../bin/${canonicalCommand}`,
+    join(agentCommandDirectory, canonicalCommand),
+  );
   cpSync(join(cliSourceRoot, "skills"), join(binaryDirectory, "skills"), {
     recursive: true,
   });
@@ -420,6 +429,8 @@ async function describeSnapshot(generationDirectory, snapshotDirectory, packageV
     executableDigest: bundleExecutable(join(binaryDirectory, "hmux"), "Staged Hmux CLI").digest,
     runtimeExecutableDigest: bundleExecutable(join(binaryDirectory, "hmux-runtime"), "Staged Hmux runtime").digest,
   } : sourceHmuxIdentity;
+  // Signing rewrites executables, so the listing is refreshed with the digest.
+  channelLauncher.writeArtifactManifest(snapshotDirectory);
   const immutableDigest = channelLauncher.artifactDigest(snapshotDirectory);
   const appIdentity = {
     schemaVersion: requestedSourceRevision ? 2 : 1,

@@ -20,6 +20,13 @@ packaged files are declared in [package.json](package.json). Install through
 `pnpm dure:install` or the installed CLI's `install --global` flow; do not copy
 an individual script out of the immutable bundle.
 
+An installed version keeps its private Node runtime and internal executables in
+`bin/`. Managed agent launches add only the version's `commands/` directory, which
+holds `dure`, to `PATH`, so the user's own Node and package managers keep their
+global prefix. When verification reports `immutable bundle digest does not match`,
+the message names the entries that differ from the version's
+`artifact-manifest.json` and how to restore the build.
+
 Automatic stable-app startup refuses to replace a newer managed CLI package or
 backend build with an older one. Open the current Dure app if it reports
 `automatic Dure CLI downgrade refused`. Explicit CLI installation retains its

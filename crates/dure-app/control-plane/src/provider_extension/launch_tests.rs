@@ -439,6 +439,78 @@ fn native_launch_and_resume_bind_channel_without_interpreting_provider_arguments
 
 #[test]
 #[cfg(unix)]
+fn agent_path_exposes_dure_without_shadowing_the_user_toolchain() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let executable = |path: &Path| {
+        std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    // The installed layout: a private runtime and internal executables share
+    // the version's bin directory; staging adds a commands directory for PATH.
+    let root = tempfile::tempdir().unwrap();
+    let version = root.path().join("versions").join("fixture");
+    let bin = version.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in [
+        "dure.mjs",
+        "node",
+        "hmux",
+        "hmux-runtime",
+        "dure-control-plane",
+    ] {
+        executable(&bin.join(name));
+    }
+    symlink("dure.mjs", bin.join("dure")).unwrap();
+    std::fs::create_dir(version.join("commands")).unwrap();
+    symlink("../bin/dure", version.join("commands").join("dure")).unwrap();
+    let user = root.path().join("user-toolchain");
+    std::fs::create_dir(&user).unwrap();
+    for name in ["node", "hmux"] {
+        executable(&user.join(name));
+    }
+
+    let directory = super::launch::agent_command_directory(&bin.join("dure-control-plane"));
+    let mut plan = AgentProviderLaunchPlanV1 {
+        executable: "/bin/sh".into(),
+        arguments: vec![
+            "-c".into(),
+            "for name in dure node hmux hmux-runtime dure-control-plane; do \
+             printf '%s=%s\\n' \"$name\" \"$(command -v \"$name\")\"; done"
+                .into(),
+        ],
+    };
+    super::launch::wrap_launch_channel(&mut plan, "stable", directory.as_deref());
+    let output = std::process::Command::new(plan.executable)
+        .args(plan.arguments)
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", user.display()))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let resolved: std::collections::BTreeMap<String, String> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, path)| (name.into(), path.into()))
+        .collect();
+    assert_eq!(
+        resolved["dure"],
+        version.join("commands").join("dure").display().to_string()
+    );
+    assert_eq!(resolved["node"], user.join("node").display().to_string());
+    assert_eq!(resolved["hmux"], user.join("hmux").display().to_string());
+    assert_eq!(resolved["hmux-runtime"], "");
+    assert_eq!(resolved["dure-control-plane"], "");
+    // A build without the commands directory exposes nothing rather than bin.
+    std::fs::remove_dir_all(version.join("commands")).unwrap();
+    assert_eq!(
+        super::launch::agent_command_directory(&bin.join("dure-control-plane")),
+        None
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn managed_environment_removes_build_overrides_and_preserves_isolation_and_credentials() {
     let mut plan = AgentProviderLaunchPlanV1 {
         executable: "/usr/bin/env".into(),

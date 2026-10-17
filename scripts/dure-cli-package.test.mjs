@@ -146,7 +146,7 @@ function packageFixture({ olderManagedInstall = false } = {}) {
     execFileSync("/bin/cp", ["-pR", path.join(resources, source), target]);
   }
   fs.rmSync(resources, { recursive: true });
-  const startup = compileStartupFixture(root);
+  let startup;
   const home = path.join(root, "clean-home");
   fs.mkdirSync(home);
   let oldVersion;
@@ -170,7 +170,10 @@ function packageFixture({ olderManagedInstall = false } = {}) {
   fs.rmSync(controlPlane);
   fs.rmSync(path.join(root, "dure-claude-process-relay"));
   const environment = scriptTestEnvironment({ HOME: home, PATH: "/usr/bin:/bin", DURE_APP_CHANNEL: "stable" });
-  const runStartup = () => spawnSync(startup, [installedResources], { env: environment, encoding: "utf8", timeout: 30_000 });
+  const runStartup = () => {
+    startup ??= compileStartupFixture(root);
+    return spawnSync(startup, [installedResources], { env: environment, encoding: "utf8", timeout: 30_000 });
+  };
   return { root, home, environment, runStartup, installedResources, oldVersion };
 }
 
@@ -232,6 +235,39 @@ macosTest("bootstraps the actual stable startup from a relocated package into an
   expect(runtime.controlPlane).toBe(path.join(versionRoot, "bin", "dure-control-plane"));
   expect(runtime.claude.nodeBin).toBe(node);
   expect(runtime.claude.relayBin).toBe(path.join(versionRoot, "bin", "dure-claude-process-relay"));
+}, 60_000);
+
+macosTest("gives managed agents the packaged dure without its private Node or internal executables", () => {
+  const { home, environment, installedResources } = packageFixture();
+  const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
+  const bootstrap = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
+    env: environment, encoding: "utf8", timeout: 15_000,
+  });
+  expect(bootstrap.status, bootstrap.stderr).toBe(0);
+  const versionRoot = fs.realpathSync(path.join(home, ".local", "share", "hebbian-ide-cli", "current"));
+  const commands = path.join(versionRoot, "commands");
+  expect(fs.readdirSync(commands)).toEqual(["dure"]);
+  for (const internal of ["node", "hmux", "hmux-runtime", "dure-control-plane"]) {
+    expect(fs.existsSync(path.join(versionRoot, "bin", internal))).toBe(true);
+  }
+  // A user toolchain later on PATH must win over everything except `dure`.
+  const userTools = path.join(home, "user-tools");
+  fs.mkdirSync(userTools);
+  for (const name of ["node", "hmux"]) fs.writeFileSync(path.join(userTools, name), "#!/bin/sh\n", { mode: 0o755 });
+  const agent = spawnSync("/bin/sh", ["-c", "for name in dure node hmux hmux-runtime dure-control-plane; do printf '%s=%s\\n' \"$name\" \"$(command -v \"$name\")\"; done; dure version --json"], {
+    env: { ...environment, PATH: `${commands}:${userTools}:/usr/bin:/bin` }, encoding: "utf8", timeout: 15_000,
+  });
+  expect(agent.status, agent.stderr).toBe(0);
+  const lines = agent.stdout.trim().split("\n");
+  expect(lines.slice(0, 5)).toEqual([
+    `dure=${path.join(commands, "dure")}`,
+    `node=${path.join(userTools, "node")}`,
+    `hmux=${path.join(userTools, "hmux")}`,
+    "hmux-runtime=",
+    "dure-control-plane=",
+  ]);
+  // The packaged command still runs on its own Node, with no Node on PATH.
+  expect(JSON.parse(lines.slice(5).join("\n")).buildId).toBe(path.basename(versionRoot));
 }, 60_000);
 
 macosTest("preserves existing stable installs, development channels, global commands, and provider files", () => {

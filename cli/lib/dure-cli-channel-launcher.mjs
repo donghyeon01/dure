@@ -8,6 +8,7 @@ import {
   readlinkSync,
   readdirSync,
   realpathSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,30 +20,178 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const CONTROL_PLANE_BUILD = /^dure-control-plane\/v([1-9][0-9]*)-/;
 
-function artifactDigest(root) {
-  const digest = createHash("sha256");
-  const visit = (pathname) => {
+// A diagnostic listing of the payload, written by staging. The aggregate digest
+// covers it and remains the only integrity decision; after a mismatch the
+// listing names what differs.
+const ARTIFACT_MANIFEST = "artifact-manifest.json";
+const MAX_ARTIFACT_MANIFEST_BYTES = 16 * 1024 * 1024;
+const MAX_REPORTED_ENTRIES = 8;
+
+function walkArtifact(root, visit) {
+  const walk = (pathname) => {
     const stat = lstatSync(pathname);
     const name = relative(root, pathname).replaceAll("\\", "/");
     if (name === "install.json") return;
     if (stat.isSymbolicLink()) {
-      digest.update(`link\0${name}\0${readlinkSync(pathname)}\0`);
+      visit({ name, kind: "link", target: readlinkSync(pathname) });
       return;
     }
     if (stat.isDirectory()) {
-      digest.update(`directory\0${name}\0`);
+      visit({ name, kind: "directory" });
       for (const entry of readdirSync(pathname).sort()) {
-        visit(join(pathname, entry));
+        walk(join(pathname, entry));
       }
       return;
     }
     if (!stat.isFile()) throw new Error("unsupported immutable artifact entry");
-    digest.update(`file\0${name}\0${stat.mode & 0o111}\0`);
-    digest.update(readFileSync(pathname));
-    digest.update("\0");
+    visit({
+      name,
+      kind: "file",
+      executable: stat.mode & 0o111,
+      contents: readFileSync(pathname),
+    });
   };
-  for (const entry of readdirSync(root).sort()) visit(join(root, entry));
+  for (const entry of readdirSync(root).sort()) walk(join(root, entry));
+}
+
+function artifactDigest(root) {
+  const digest = createHash("sha256");
+  walkArtifact(root, (entry) => {
+    if (entry.kind === "link") {
+      digest.update(`link\0${entry.name}\0${entry.target}\0`);
+    } else if (entry.kind === "directory") {
+      digest.update(`directory\0${entry.name}\0`);
+    } else {
+      digest.update(`file\0${entry.name}\0${entry.executable}\0`);
+      digest.update(entry.contents);
+      digest.update("\0");
+    }
+  });
   return digest.digest("hex");
+}
+
+function artifactEntries(root) {
+  const entries = [];
+  walkArtifact(root, (entry) => {
+    if (entry.name === ARTIFACT_MANIFEST) return;
+    entries.push([
+      entry.name,
+      entry.kind === "link"
+        ? `link ${entry.target}`
+        : entry.kind === "directory"
+          ? "directory"
+          : `file ${entry.executable ? "x" : "-"} ${createHash("sha256").update(entry.contents).digest("hex")}`,
+    ]);
+  });
+  return entries;
+}
+
+function writeArtifactManifest(root) {
+  writeFileSync(
+    join(root, ARTIFACT_MANIFEST),
+    `${JSON.stringify({ schemaVersion: 1, entries: artifactEntries(root) })}\n`,
+    { mode: 0o644 },
+  );
+}
+
+function recordedArtifactEntries(root) {
+  try {
+    const pathname = join(root, ARTIFACT_MANIFEST);
+    const stat = lstatSync(pathname);
+    if (!stat.isFile() || stat.size > MAX_ARTIFACT_MANIFEST_BYTES) return null;
+    const manifest = JSON.parse(readFileSync(pathname, "utf8"));
+    if (
+      !exactKeys(manifest, ["schemaVersion", "entries"]) ||
+      manifest.schemaVersion !== 1 ||
+      !Array.isArray(manifest.entries) ||
+      !manifest.entries.every(
+        (entry) =>
+          Array.isArray(entry) &&
+          entry.length === 2 &&
+          entry.every((value) => typeof value === "string"),
+      )
+    ) {
+      return null;
+    }
+    return new Map(manifest.entries);
+  } catch {
+    return null;
+  }
+}
+
+/** Entries that differ from the staged listing; a directory covers its contents. */
+function artifactDrift(root) {
+  const recorded = recordedArtifactEntries(root);
+  if (!recorded) return null;
+  const observed = new Map(artifactEntries(root));
+  const differences = [];
+  for (const [name, entry] of observed) {
+    if (!recorded.has(name)) differences.push([name, "unexpected"]);
+    else if (recorded.get(name) !== entry) differences.push([name, "changed"]);
+  }
+  for (const name of recorded.keys()) {
+    if (!observed.has(name)) differences.push([name, "missing"]);
+  }
+  // A reported directory stands for everything beneath it. Sorting places
+  // each directory before its descendants.
+  const drift = { unexpected: [], missing: [], changed: [] };
+  const reported = new Set();
+  differences.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  for (const [name, kind] of differences) {
+    const parts = name.split("/");
+    const covered = parts
+      .slice(0, -1)
+      .some((_, index) => reported.has(parts.slice(0, index + 1).join("/")));
+    if (covered) continue;
+    reported.add(name);
+    drift[kind].push(name);
+  }
+  return drift;
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function artifactDigestMismatch(versionRoot, buildId) {
+  const subject = `Dure CLI build ${buildId} in ${versionRoot} changed after installation`;
+  let drift;
+  try {
+    drift = artifactDrift(versionRoot);
+  } catch {
+    drift = null;
+  }
+  const installRoot = dirname(dirname(versionRoot));
+  const reinstall =
+    `Reinstall it: move ${installRoot} aside, then reopen the Dure app ` +
+    "(or rerun the Dure CLI installation).";
+  if (!drift) {
+    return `immutable bundle digest does not match: ${subject}. ${reinstall}`;
+  }
+  const listed = Object.entries(drift)
+    .filter(([, names]) => names.length > 0)
+    .map(([kind, names]) => {
+      const shown = names.slice(0, MAX_REPORTED_ENTRIES).join(", ");
+      const more = names.length - MAX_REPORTED_ENTRIES;
+      return `${kind}: ${shown}${more > 0 ? ` and ${more} more` : ""}`;
+    });
+  const changes = listed.length > 0 ? ` (${listed.join("; ")})` : "";
+  if (drift.missing.length > 0 || drift.changed.length > 0 || drift.unexpected.length === 0) {
+    return `immutable bundle digest does not match: ${subject}${changes}. ${reinstall}`;
+  }
+  const paths = drift.unexpected.map((name) => join(versionRoot, ...name.split("/")));
+  const removal =
+    paths.length > MAX_REPORTED_ENTRIES
+      ? `remove the ${paths.length} entries that ${ARTIFACT_MANIFEST} does not list from ${versionRoot}`
+      : process.platform === "win32"
+        ? `remove ${paths.join(", ")}`
+        : `rm -rf -- ${paths.map(shellQuote).join(" ")}`;
+  return (
+    `immutable bundle digest does not match: ${subject}${changes}. ` +
+    "These entries are not part of Dure; a global package install that ran " +
+    "with Dure's bundled Node can write them. To restore the build, " +
+    `${removal}`
+  );
 }
 
 function executableDigest(pathname) {
@@ -166,7 +315,7 @@ function parseMetadata(versionRoot) {
     throw new Error("bundle metadata is incompatible");
   }
   if (artifactDigest(versionRoot) !== metadata.bundle.artifactDigest) {
-    throw new Error("immutable bundle digest does not match");
+    throw new Error(artifactDigestMismatch(versionRoot, metadata.buildId));
   }
   if (metadata.bundle.hmux.schemaVersion === 2) {
     executableDigest(join(versionRoot, "bin", "node"));
@@ -307,4 +456,10 @@ if (
   await launch();
 }
 
-export { artifactDigest, buildSequence, parseMetadata, resolveChannelCommand };
+export {
+  artifactDigest,
+  buildSequence,
+  parseMetadata,
+  resolveChannelCommand,
+  writeArtifactManifest,
+};
