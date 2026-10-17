@@ -48,7 +48,7 @@ describe("Hmux input receipt parsing", () => {
 				terminalEpoch: "terminal-1",
 				text: true,
 				submit: true,
-				atomic: true,
+				draftGuardRequested: true,
 			}),
 		).toEqual(atomic);
 		expect(() =>
@@ -67,10 +67,54 @@ describe("Hmux input receipt parsing", () => {
 					terminalEpoch: "terminal-1",
 					text: true,
 					submit: true,
-					atomic: true,
+					draftGuardRequested: true,
 				}),
 			).toThrow("input_receipt_invalid");
 		}
+	});
+
+	it("accepts ordinary records for a guarded request only when the Host says it had no guard", () => {
+		const unguarded = {
+			terminalEpoch: "terminal-1",
+			text: { state: "written_to_pty", recordId: "7" },
+			submit: { state: "written_to_pty", recordId: "8" },
+			draftGuarded: false,
+		};
+		const expected = {
+			terminalEpoch: "terminal-1",
+			text: true,
+			submit: true,
+			draftGuardRequested: true,
+		};
+		expect(parseHmuxCommandInputReceipt(unguarded, expected)).toEqual(unguarded);
+		expect(
+			parseHmuxCommandInputReceipt(
+				{
+					terminalEpoch: "terminal-1",
+					text: { state: "written_to_pty", recordId: "9" },
+					submit: { state: "written_to_pty", recordId: "9" },
+					atomic: true,
+					draftGuarded: true,
+				},
+				expected,
+			),
+		).toMatchObject({ atomic: true, draftGuarded: true });
+		for (const receipt of [
+			{ ...unguarded, draftGuarded: undefined },
+			{ ...unguarded, draftGuarded: true },
+			{ ...unguarded, atomic: true },
+		]) {
+			expect(() => parseHmuxCommandInputReceipt(receipt, expected)).toThrow(
+				"input_receipt_invalid",
+			);
+		}
+		expect(() =>
+			parseHmuxCommandInputReceipt(unguarded, {
+				terminalEpoch: "terminal-1",
+				text: true,
+				submit: true,
+			}),
+		).toThrow("input_receipt_invalid");
 	});
 
 	it("returns a typed boundary error when a requested submit receipt is missing", () => {

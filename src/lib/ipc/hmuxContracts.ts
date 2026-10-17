@@ -555,6 +555,9 @@ export interface HmuxCommandInputReceipt {
 	submit?: HmuxSemanticInputReceipt;
 	/** Text and submit were one draft-guarded Host write sharing a record. */
 	atomic?: true;
+	/** Present for a draft-guarded request; `false` when the Host predates
+	 *  the guard and received ordinary input instead. */
+	draftGuarded?: boolean;
 }
 
 /** Exact managed runtime identity and fence for one Host-admitted prompt. */

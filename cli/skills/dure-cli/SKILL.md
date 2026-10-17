@@ -188,8 +188,10 @@ did not land. `send-keys` needs a local managed terminal, not SSH or chat.
 
 Terminal `send` never merges into text a person has typed but not submitted. It
 waits up to `--draft-wait` seconds (default 30) for them to submit; otherwise it
-fails with `hmux_input_draft_pending` and nothing written. Retry later or send a
-`--track` message instead. Use `--ignore-draft` only when the user asks for it.
+fails with `hmux_input_draft_pending` and nothing written. Only their Enter clears
+the draft; erased text does not. Retry later or send a `--track` message instead.
+Use `--ignore-draft` only when the user asks for it. A session started before the
+guard gets ordinary input and a stderr warning; restarting it enables the guard.
 
 ## Wait rather than poll `read`
 

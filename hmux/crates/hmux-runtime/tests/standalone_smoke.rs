@@ -940,6 +940,7 @@ fn draft_guarded_command_input_never_merges_into_an_unsubmitted_draft() {
         .unwrap();
     finisher.join().unwrap();
     assert!(delivered.atomic());
+    assert!(delivered.draft_guarded());
     assert_eq!(
         delivered.text().unwrap().in_reply_to_record_id,
         delivered.submit().unwrap().in_reply_to_record_id

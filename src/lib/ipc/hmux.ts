@@ -246,7 +246,7 @@ export const hmux = {
 			terminalEpoch: request.expectedFence?.terminalEpoch,
 			text: request.text.length > 0,
 			submit: request.submit,
-			atomic: request.draftGuardWaitMs !== undefined,
+			draftGuardRequested: request.draftGuardWaitMs !== undefined,
 		});
 	},
 	initialAgentPrompt: async (request: HmuxInitialAgentPromptRequest) => {

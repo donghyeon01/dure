@@ -538,7 +538,7 @@ export async function remoteHmuxCommandInput(input: {
 		terminalEpoch: input.session.terminalEpoch,
 		text: input.text.length > 0,
 		submit: input.submit,
-		atomic: input.draftGuardWaitMs !== undefined,
+		draftGuardRequested: input.draftGuardWaitMs !== undefined,
 	});
 }
 

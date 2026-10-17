@@ -559,8 +559,7 @@ function inspectManagedInputCompatibility() {
   return hmuxManagedInputInspection;
 }
 
-/** Whether this hmux can carry the requested input; a draft-guarded send
- * never falls back to ordinary paste-then-Enter input. */
+/** Whether this hmux can carry the requested input with its draft guard. */
 function managedInputDirectCompatible(compatibility, draftGuard) {
   return compatibility.managedInputCompatible &&
     (!draftGuard || compatibility.draftGuardCompatible);
@@ -571,7 +570,9 @@ function draftGuardGuidance(code, draftGuard) {
   if (code === "hmux_input_draft_pending") {
     return ` The target terminal still has unsubmitted input from its user` +
       `${draftGuard ? ` after waiting ${draftGuard.waitMs / 1000}s` : ""}, so nothing was sent.` +
-      " Retry later (raise --draft-wait to wait longer), or use --track to queue a durable message.";
+      " The guard clears when the user submits (presses Enter) in that terminal; erasing the" +
+      " text without Enter does not clear it. Retry later (raise --draft-wait to wait longer)," +
+      " use --track to queue a durable message, or resend with --ignore-draft to send anyway.";
   }
   if (code === "hmux_input_draft_guard_unavailable") {
     return " The target's Hmux runtime predates draft-guarded input, so Dure cannot rule out" +
@@ -786,14 +787,17 @@ function sendManagedInputDirect(binding, text, enter, draftGuard) {
 }
 
 /** An ordinary receipt has text then submit as consecutive records; a
- * draft-guarded receipt is one atomic Host record shared by both. */
+ * draft-guarded receipt is one atomic Host record shared by both. A guarded
+ * request to a Host without the guard returns an ordinary receipt marked
+ * `draftGuarded: false`. */
 function validSemanticCommandInputReceipt(
   receipt,
   text,
   submit,
   expectedTerminalEpoch,
-  atomic = false,
+  guardRequested = false,
 ) {
+  const atomic = guardRequested && receipt?.draftGuarded !== false;
   const writtenRecordId = (value) =>
     value?.state === "written_to_pty" &&
     typeof value.recordId === "string" &&
@@ -810,6 +814,9 @@ function validSemanticCommandInputReceipt(
     (text.length > 0 ? textRecordId !== null : receipt.text == null) &&
     (submit ? submitRecordId !== null : receipt.submit == null) &&
     (atomic ? receipt.atomic === true : receipt.atomic == null) &&
+    (guardRequested
+      ? receipt.draftGuarded === undefined || receipt.draftGuarded === atomic
+      : receipt.draftGuarded == null) &&
     (textRecordId === null ||
       submitRecordId === null ||
       submitRecordId === (atomic ? textRecordId : textRecordId + 1n))
@@ -890,12 +897,11 @@ async function sendExactSession(sessionId, text, opts) {
   if (!compatibility.managedInputCompatible) {
     fail(`Exact Session input requires the ${MANAGED_INPUT_HMUX_CAPABILITY} capability. Update the selected Hmux runtime.`);
   }
-  if (!managedInputDirectCompatible(compatibility, opts.draftGuard)) {
-    fail(`hmux_input_draft_guard_unavailable: the selected hmux lacks ${MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY}. Nothing was sent. Update Hmux, or resend with --ignore-draft.`);
-  }
-  const direct = sendManagedInputDirect(binding, text, opts.enter, opts.draftGuard);
+  // An hmux from before the guard still delivers, as input did before it.
+  const guarded = managedInputDirectCompatible(compatibility, opts.draftGuard);
+  const direct = sendManagedInputDirect(binding, text, opts.enter, guarded ? opts.draftGuard : null);
   if (direct.kind !== "success") fail(direct.detail);
-  return direct.input;
+  return guarded ? direct.input : { ...direct.input, unguardedReason: "hmux" };
 }
 
 async function sendText(
@@ -960,14 +966,24 @@ async function sendText(
           );
         }
       }
-      if (draftGuard && inspectManagedInputCompatibility().managedInputCompatible) {
-        fail(`hmux_input_draft_guard_unavailable: the selected hmux lacks ${MANAGED_INPUT_DRAFT_GUARD_HMUX_CAPABILITY} and the Dure app is not running. Nothing was sent. Update Hmux, or resend with --ignore-draft.`);
+      // Reached with a guard only when this hmux predates it; deliver as
+      // input did before the guard rather than refusing.
+      if (
+        draftGuard &&
+        binding.runtime === "hmux_managed_v1" &&
+        managedInputFenceJson(binding) &&
+        inspectManagedInputCompatibility().managedInputCompatible
+      ) {
+        const direct = sendManagedInputDirect(binding, text, enter, null);
+        if (direct.kind !== "success") fail(direct.detail);
+        return { ...direct.input, unguardedReason: "hmux" };
       }
       fail("The app server was not found. Reopen or migrate this legacy Hmux binding.");
     }
-    if (draftGuard && !(Array.isArray(srv.capabilities) && srv.capabilities.includes(APP_INPUT_DRAFT_GUARD_CAPABILITY))) {
-      fail("hmux_input_draft_guard_unavailable: the running Dure app predates draft-guarded input. Nothing was sent. Restart the updated Dure app, or resend with --ignore-draft.");
-    }
+    // An app from before the guard would ignore it; send ordinary input.
+    const appGuards = Array.isArray(srv.capabilities) &&
+      srv.capabilities.includes(APP_INPUT_DRAFT_GUARD_CAPABILITY);
+    const appDraftGuard = appGuards ? draftGuard : null;
     const idempotencyKey = requestedIdempotencyKey ?? randomUUID();
     const body = {
       target: {
@@ -981,7 +997,7 @@ async function sendText(
       enter: enter !== false,
       idempotencyKey,
     };
-    if (draftGuard) body.draftGuardWaitMs = draftGuard.waitMs;
+    if (appDraftGuard) body.draftGuardWaitMs = appDraftGuard.waitMs;
     if (windowLabel) body.windowLabel = windowLabel;
     const request = async () => {
       try {
@@ -1012,7 +1028,7 @@ async function sendText(
     const { res, response } = attempt;
     if (!res.ok || !response?.ok) {
       const code = typeof response?.error?.code === "string" ? response.error.code : "";
-      const guidance = draftGuardGuidance(code, draftGuard);
+      const guidance = draftGuardGuidance(code, appDraftGuard);
       fail(
         `${guidance ? `${code}: ` : ""}${response?.error?.message || `Managed Hmux input was rejected (HTTP ${res.status})`} (idempotency key: ${idempotencyKey})${guidance}`,
       );
@@ -1023,14 +1039,16 @@ async function sendText(
         text,
         enter !== false,
         undefined,
-        Boolean(draftGuard),
+        Boolean(appDraftGuard),
       )
     ) {
       fail(
         `The app server did not return a semantic written_to_pty receipt. The outcome is indeterminate and was not automatically retried. (idempotency key: ${idempotencyKey})`,
       );
     }
-    return response.input;
+    return draftGuard && !appGuards
+      ? { ...response.input, unguardedReason: "app" }
+      : response.input;
   }
 
   // The legacy daemon send path is retired (2026-08-16): every deliverable

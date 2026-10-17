@@ -614,9 +614,10 @@ Use `dure read` and `dure inspect` to inspect the target before sending again.
 Native failures preserve their delivery state; a missing receipt is not proof
 that nothing reached the terminal. Direct input is never automatically retried.
 `hmux_input_draft_pending` is different: it is a definite non-write because the
-person has unsubmitted input in that terminal. Retry later or send a `--track`
-message. `hmux_input_draft_guard_unavailable` means the target runtime predates
-the draft guard; ask the user before resending with `--ignore-draft`.
+person has unsubmitted input in that terminal. Only their Enter clears it;
+erased text does not. Retry later or send a `--track` message. A target whose
+runtime predates the guard receives ordinary input with a stderr warning;
+restarting that session enables the guard.
 
 ## Dispatch deadlines
 

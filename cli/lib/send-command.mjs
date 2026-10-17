@@ -30,9 +30,10 @@ Enter is sent by default; use --no-enter to insert without submitting.
 Terminal input never merges into text the user has typed but not submitted: text and
 Enter are one Host transaction, written only while the target has no such draft. A send
 waits up to --draft-wait for the user to submit; if the draft remains it fails with
-hmux_input_draft_pending and nothing written. Retry later or use --track. A target whose
-runtime cannot guard drafts fails with hmux_input_draft_guard_unavailable; --ignore-draft
-writes without the guard.
+hmux_input_draft_pending and nothing written. The draft clears only when the user submits
+it; erasing the text without Enter does not. Retry later, use --track, or --ignore-draft
+to write anyway. A session started before the guard existed receives ordinary input, with
+a warning on stderr; restart that session to guard it.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
 Tracked send cannot be combined with --no-enter or --idempotency-key.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
@@ -108,7 +109,26 @@ function extractDraftGuard(args) {
   };
 }
 
+const UNGUARDED_CAUSE = {
+  app: "the running Dure app predates draft-guarded input. Restart the updated Dure app",
+  hmux: "the selected hmux predates draft-guarded input. Update Hmux",
+};
+
+/** A guarded request that came back as ordinary input never checked the
+ * user's draft; say so without changing the delivery receipt. */
+function warnUnguarded(agent, input, opts) {
+  const receipt = input?.receipt;
+  if (!opts.draftGuard || !receipt || receipt.kind || receipt.atomic === true) return;
+  const cause = UNGUARDED_CAUSE[input.unguardedReason] ??
+    "its Hmux runtime predates draft-guarded input. Restart that session";
+  process.stderr.write(
+    `dure send: warning: ${agent.name} was sent without waiting for an unsubmitted user draft; ` +
+      `${cause} to enable the guard.\n`,
+  );
+}
+
 function printDelivery(agent, input, opts) {
+  warnUnguarded(agent, input, opts);
   if (opts.json) {
     process.stdout.write(`${JSON.stringify({
       apiVersion: "dure.send/v1", ok: true,

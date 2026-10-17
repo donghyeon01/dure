@@ -49,15 +49,16 @@ function semanticInputReceipt(
 	};
 }
 
-/** A draft-guarded request must come back as one atomic Host record; an
- * ordinary request keeps its separate text-then-submit records. */
+/** A draft-guarded request comes back as one atomic Host record, or, from a
+ * Host without the guard, as ordinary text-then-submit records marked
+ * `draftGuarded: false`. An ordinary request keeps its separate records. */
 export function parseHmuxCommandInputReceipt(
 	value: unknown,
 	expected: {
 		terminalEpoch?: string;
 		text: boolean;
 		submit: boolean;
-		atomic?: boolean;
+		draftGuardRequested?: boolean;
 	},
 ): HmuxCommandInputReceipt {
 	if (!value || typeof value !== "object") {
@@ -66,7 +67,8 @@ export function parseHmuxCommandInputReceipt(
 	const receipt = value as Record<string, unknown>;
 	const text = semanticInputReceipt(receipt.text);
 	const submit = semanticInputReceipt(receipt.submit);
-	const atomic = expected.atomic === true;
+	const guardRequested = expected.draftGuardRequested === true;
+	const atomic = guardRequested && receipt.draftGuarded !== false;
 	if (
 		typeof receipt.terminalEpoch !== "string" ||
 		!receipt.terminalEpoch ||
@@ -75,6 +77,9 @@ export function parseHmuxCommandInputReceipt(
 		Boolean(text) !== expected.text ||
 		Boolean(submit) !== expected.submit ||
 		(atomic ? receipt.atomic !== true : receipt.atomic !== undefined) ||
+		(guardRequested
+			? receipt.draftGuarded !== undefined && receipt.draftGuarded !== atomic
+			: receipt.draftGuarded !== undefined) ||
 		(text &&
 			submit &&
 			(atomic
@@ -91,6 +96,9 @@ export function parseHmuxCommandInputReceipt(
 		...(text ? { text } : {}),
 		...(submit ? { submit } : {}),
 		...(atomic ? { atomic: true as const } : {}),
+		...(guardRequested && receipt.draftGuarded !== undefined
+			? { draftGuarded: atomic }
+			: {}),
 	};
 }
 

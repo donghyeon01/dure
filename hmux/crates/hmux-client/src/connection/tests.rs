@@ -3917,12 +3917,21 @@ fn guarded_writer_surface(
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
-fn draft_guarded_command_input_never_degrades_on_a_host_without_the_guard() {
+fn draft_guarded_command_input_sends_ordinary_input_to_a_host_without_the_guard() {
     use hmux_runtime_contract::{
         TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
         TERMINAL_STATE_BINARY_CAPABILITY, TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
     };
+    use terminal_state_protocol::{
+        InputWrittenToPty, input_intent, input_receipt, terminal_state_record,
+    };
 
+    let written = || {
+        input_receipt::Outcome::WrittenToPty(InputWrittenToPty {
+            input_baseline_output_sequence: Some(1),
+            agent_runtime_revision: None,
+        })
+    };
     let (mut surface, mut host) = guarded_writer_surface(
         &[
             "screen_snapshot",
@@ -3931,18 +3940,23 @@ fn draft_guarded_command_input_never_degrades_on_a_host_without_the_guard() {
             TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
             TERMINAL_INPUT_INTENT_CAPABILITY,
         ],
-        &[],
+        &[(1, written()), (2, written())],
     );
-    let error = surface
+    let receipt = surface
         .send_draft_guarded_command_input_confirmed(
             "report".into(),
             true,
             Duration::from_millis(50),
             Duration::from_secs(1),
         )
-        .unwrap_err();
-    assert_eq!(error.code(), "hmux_input_draft_guard_unavailable");
-    assert_eq!(error.delivery_state(), "not_written");
+        .unwrap();
+    assert!(
+        !receipt.draft_guarded(),
+        "an older Host never checked a draft"
+    );
+    assert!(!receipt.atomic());
+    assert_eq!(receipt.text().unwrap().in_reply_to_record_id, 1);
+    assert_eq!(receipt.submit().unwrap().in_reply_to_record_id, 2);
     let frame = host.read_frame(&codec()).unwrap().unwrap();
     let FrameBody::Hello(hello) = &frame.frame().body else {
         panic!("writer attach did not begin with Hello");
@@ -3954,6 +3968,21 @@ fn draft_guarded_command_input_never_degrades_on_a_host_without_the_guard() {
             .any(|capability| capability == TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY),
         "every writer offers the guard so a current Host can select it"
     );
+    for expected_record_id in 1..=2 {
+        let encoded = host.read_payload(&codec()).unwrap().unwrap();
+        let decoded = terminal_state_protocol::decode_record(&encoded).unwrap();
+        assert_eq!(decoded.metadata.record_id, expected_record_id);
+        let Some(terminal_state_record::Body::InputIntent(intent)) = decoded.record.body else {
+            panic!("fallback input did not remain semantic");
+        };
+        match (expected_record_id, intent.intent) {
+            (1, Some(input_intent::Intent::Paste(text))) => assert_eq!(text.utf8, b"report"),
+            (2, Some(input_intent::Intent::Key(key))) => {
+                assert_eq!((key.key.as_str(), key.code.as_str()), ("Enter", "Enter"));
+            }
+            _ => panic!("fallback must be ordinary paste followed by Enter"),
+        }
+    }
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -4015,6 +4044,7 @@ fn draft_guarded_command_input_is_one_intent_with_a_stable_draft_refusal() {
         )
         .unwrap();
     assert!(receipt.atomic());
+    assert!(receipt.draft_guarded());
     assert_eq!(receipt.text().unwrap().in_reply_to_record_id, 2);
     assert_eq!(receipt.submit().unwrap().in_reply_to_record_id, 2);
 

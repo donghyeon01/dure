@@ -15,7 +15,7 @@ afterEach(async () => {
 
 const structuredProfile = { schemaVersion: 1, kind: "structured_protocol", backendProfileId: "local", interactionSessionId: "interaction-1" };
 
-async function fixture({ refused = false, refusal = { code: "stale_generation", message: "stale_generation" }, structured = false, wrongReceipt = false, panelId = "agent:agent-1", lostResponse = false, omitPaneId = false, inputPatch = {}, appCapabilities = ["hmux.input.draft_guard_v1"] } = {}) {
+async function fixture({ refused = false, refusal = { code: "stale_generation", message: "stale_generation" }, structured = false, wrongReceipt = false, panelId = "agent:agent-1", lostResponse = false, omitPaneId = false, inputPatch = {}, appCapabilities = ["hmux.input.draft_guard_v1"], unguardedHost = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-send-input-"));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
   const requests = [];
@@ -26,8 +26,10 @@ async function fixture({ refused = false, refusal = { code: "stale_generation", 
     requests.push({ path: request.url, authorization: request.headers.authorization, payload });
     if (lostResponse) { response.destroy(); return; }
     response.writeHead(refused ? 409 : 200, { "Content-Type": "application/json" });
-    // A draft-guarded write is one Host record shared by text and submit.
-    const atomic = payload.draftGuardWaitMs !== undefined;
+    // A draft-guarded write is one Host record shared by text and submit; a
+    // Host without the guard answers a guarded request with ordinary records.
+    const guarded = payload.draftGuardWaitMs !== undefined;
+    const atomic = guarded && !unguardedHost;
     response.end(JSON.stringify(refused
       ? { ok: false, error: refusal }
       : structured ? { ok: true, input: {
@@ -41,7 +43,8 @@ async function fixture({ refused = false, refusal = { code: "stale_generation", 
         receipt: { terminalEpoch: "epoch-1",
           text: { recordId: "41", state: "written_to_pty" },
           submit: payload.enter ? { recordId: atomic ? "41" : "42", state: "written_to_pty" } : null,
-          ...(atomic ? { atomic: true } : {}) },
+          ...(atomic ? { atomic: true } : {}),
+          ...(guarded ? { draftGuarded: atomic } : {}) },
       } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -185,7 +188,7 @@ describe("scriptable dure send input", () => {
     expect(JSON.parse(result.stdout)).toEqual({ apiVersion: "dure.send/v1", ok: true,
       target: { agentId: "agent-1", sessionId: "session-1", workspaceId: "workspace-1" },
       receipt: { terminalEpoch: "epoch-1", text: { recordId: "41", state: "written_to_pty" },
-        submit: { recordId: "41", state: "written_to_pty" }, atomic: true },
+        submit: { recordId: "41", state: "written_to_pty" }, atomic: true, draftGuarded: true },
     });
     expect(result.stdout).not.toContain("literal");
   });
@@ -248,13 +251,28 @@ describe("scriptable dure send input", () => {
     expect(requests[0].payload.text).toBe(text);
   });
 
-  it("refuses before contacting an app that cannot guard the user's draft", async () => {
+  it("sends ordinary input through an app that predates the guard and warns", async () => {
     const { run, requests } = await fixture({ appCapabilities: [] });
-    const result = await run(["worker", "lane report"]);
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("hmux_input_draft_guard_unavailable");
-    expect(result.stderr).toContain("Nothing was sent");
-    expect(requests).toEqual([]);
+    const result = await run(["worker", "lane report", "--json"]);
+    expect(result.code).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].payload).not.toHaveProperty("draftGuardWaitMs");
+    expect(result.stderr).toContain("dure send: warning: worker was sent without waiting");
+    expect(result.stderr).toContain("Restart the updated Dure app");
+    expect(result.stderr).not.toContain("hmux_input_draft_guard_unavailable");
+    expect(JSON.parse(result.stdout).receipt).not.toHaveProperty("atomic");
+  });
+
+  it("warns when a session's Host answers a guarded send with ordinary input", async () => {
+    const { run, requests } = await fixture({ unguardedHost: true });
+    const result = await run(["worker", "lane report", "--json"]);
+    expect(result.code).toBe(0);
+    expect(requests[0].payload.draftGuardWaitMs).toBe(30_000);
+    expect(result.stderr).toContain("its Hmux runtime predates draft-guarded input");
+    expect(result.stderr).toContain("Restart that session");
+    expect(JSON.parse(result.stdout).receipt).toMatchObject({
+      text: { recordId: "41" }, submit: { recordId: "42" }, draftGuarded: false,
+    });
   });
 
   it("sends ordinary input through an older app only with --ignore-draft", async () => {
@@ -275,7 +293,9 @@ describe("scriptable dure send input", () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("hmux_input_draft_pending");
     expect(result.stderr).toContain("after waiting 3s");
+    expect(result.stderr).toContain("presses Enter");
     expect(result.stderr).toContain("--track");
+    expect(result.stderr).toContain("--ignore-draft");
     expect(requests).toHaveLength(1);
     expect(requests[0].payload.draftGuardWaitMs).toBe(3_000);
   });

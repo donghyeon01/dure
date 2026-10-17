@@ -54,6 +54,7 @@ pub struct TerminalCommandInputReceipt {
     text: Option<InputReceipt>,
     submit: Option<InputReceipt>,
     atomic: bool,
+    draft_guarded: bool,
 }
 
 impl fmt::Debug for TerminalCommandInputReceipt {
@@ -76,6 +77,7 @@ impl fmt::Debug for TerminalCommandInputReceipt {
                     .map(|receipt| receipt.in_reply_to_record_id),
             )
             .field("atomic", &self.atomic)
+            .field("draft_guarded", &self.draft_guarded)
             .finish()
     }
 }
@@ -101,6 +103,14 @@ impl TerminalCommandInputReceipt {
     #[must_use]
     pub fn atomic(&self) -> bool {
         self.atomic
+    }
+
+    /// Whether the Host draft guard admitted this write. A guarded request to
+    /// a Host or relay without the guard is sent as ordinary input and reports
+    /// `false`, so callers can tell the user the draft was not checked.
+    #[must_use]
+    pub fn draft_guarded(&self) -> bool {
+        self.draft_guarded
     }
 }
 
@@ -1165,9 +1175,10 @@ impl TerminalSurfaceAttachment {
     /// The Host writes body plus optional submit only while no unsubmitted
     /// controller draft is pending, waiting up to `draft_wait` for a person to
     /// submit theirs. A definite draft refusal is retried within that budget,
-    /// so a Host that refuses without waiting behaves the same way. Without
-    /// the negotiated guard this refuses before any byte is written rather
-    /// than degrading to ordinary paste-then-Enter input.
+    /// so a Host that refuses without waiting behaves the same way. A Host or
+    /// relay that predates the guard (a session started before it shipped)
+    /// receives ordinary paste-then-Enter input, as before the guard existed;
+    /// the receipt reports `draft_guarded() == false` so callers can say so.
     pub fn send_draft_guarded_command_input_confirmed(
         &mut self,
         text: String,
@@ -1188,10 +1199,9 @@ impl TerminalSurfaceAttachment {
             .as_ref()
             .is_some_and(TerminalInputWriterCapability::supports_draft_guarded_input)
         {
-            return Err(not_written(ClientError::transport(
-                "hmux_input_draft_guard_unavailable",
-                "the target Hmux Host or relay did not negotiate draft-guarded input; nothing was written",
-            )));
+            // Nothing has been written yet, so ordinary input cannot duplicate
+            // a guarded attempt.
+            return self.send_command_input_confirmed(text, submit, timeout);
         }
         let now = Instant::now();
         let overflow = || {
@@ -1242,6 +1252,7 @@ impl TerminalSurfaceAttachment {
                         text: has_text.then(|| input.clone()),
                         submit: submit.then_some(input),
                         atomic: true,
+                        draft_guarded: true,
                     });
                 }
                 // Each refusal is a definite non-write, so retrying cannot
@@ -1450,6 +1461,7 @@ impl TerminalSurfaceAttachment {
             text,
             submit,
             atomic: false,
+            draft_guarded: false,
         })
     }
 

@@ -145,6 +145,7 @@ pub(super) fn execute(
         }
         return Ok(());
     }
+    let draft_guard_requested = args.draft_guard_wait_ms.is_some();
     let sent = match args.draft_guard_wait_ms {
         Some(wait_ms) => {
             let draft_wait = Duration::from_millis(u64::from(wait_ms));
@@ -180,14 +181,17 @@ pub(super) fn execute(
                 "sessionName": session.descriptor().session_name,
                 "sessionId": session.descriptor().session_id,
                 "workspaceId": session.descriptor().workspace_id,
-                "receipt": command_input_receipt_json(&receipt),
+                "receipt": command_input_receipt_json(&receipt, draft_guard_requested),
             }))?
         ))?;
     }
     Ok(())
 }
 
-fn command_input_receipt_json(receipt: &TerminalCommandInputReceipt) -> serde_json::Value {
+fn command_input_receipt_json(
+    receipt: &TerminalCommandInputReceipt,
+    draft_guard_requested: bool,
+) -> serde_json::Value {
     let record = |receipt: Option<&terminal_state_protocol::InputReceipt>| {
         receipt.map(|receipt| {
             serde_json::json!({
@@ -204,6 +208,10 @@ fn command_input_receipt_json(receipt: &TerminalCommandInputReceipt) -> serde_js
     if receipt.atomic() {
         // Text and submit share one draft-guarded Host record.
         projected["atomic"] = true.into();
+    }
+    if draft_guard_requested {
+        // False when a Host or relay without the guard took ordinary input.
+        projected["draftGuarded"] = receipt.draft_guarded().into();
     }
     projected
 }

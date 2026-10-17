@@ -60,10 +60,13 @@ if (args[0] === "capabilities") {
   } else {
     const text = args[args.indexOf("--text") + 1];
     const submit = args.includes("--submit");
-    // A draft-guarded write is one Host record shared by text and submit.
-    const atomic = args.includes("--draft-guard-wait-ms") && process.env.HMUX_FIXTURE_MODE !== "unguarded-receipt";
+    // A draft-guarded write is one Host record shared by text and submit; a
+    // Host from before the guard answers it with ordinary records.
+    const guarded = args.includes("--draft-guard-wait-ms");
+    const oldHost = process.env.HMUX_FIXTURE_MODE === "old-host";
+    const atomic = guarded && !oldHost && process.env.HMUX_FIXTURE_MODE !== "unguarded-receipt";
     const submitRecordId = process.env.HMUX_FIXTURE_MODE === "nonsequential-receipt" ? "3" : atomic || !text ? "1" : "2";
-    process.stdout.write(JSON.stringify({ ok: true, receipt: { terminalEpoch: "terminal-epoch-1", text: text ? { recordId: "1", state: "written_to_pty" } : null, submit: submit ? { recordId: submitRecordId, state: "written_to_pty" } : null, ...(atomic ? { atomic: true } : {}) } }));
+    process.stdout.write(JSON.stringify({ ok: true, receipt: { terminalEpoch: "terminal-epoch-1", text: text ? { recordId: "1", state: "written_to_pty" } : null, submit: submit ? { recordId: submitRecordId, state: "written_to_pty" } : null, ...(atomic ? { atomic: true, draftGuarded: true } : {}), ...(guarded && oldHost ? { draftGuarded: false } : {}) } }));
   }
 } else {
   process.stderr.write("unexpected fixture command: " + JSON.stringify(args));
@@ -293,11 +296,13 @@ describe.skipIf(process.platform === "win32")(
 			expect(result.status).toBe(1);
 			expect(result.stderr).toContain("hmux_input_draft_pending");
 			expect(result.stderr).toContain("deliveryState=not_written");
+			expect(result.stderr).toContain("presses Enter");
 			expect(result.stderr).toContain("--track");
+			expect(result.stderr).toContain("--ignore-draft");
 			expect(commandInputCalls(fx.hmuxLog)).toHaveLength(1);
 		});
 
-		it("refuses before writing when the selected hmux cannot guard drafts", () => {
+		it("sends ordinary input with a warning when the selected hmux predates the guard", () => {
 			const fx = fixture();
 			const result = spawnSync(
 				process.execPath,
@@ -305,10 +310,35 @@ describe.skipIf(process.platform === "win32")(
 				spawnOptions(fx, { HMUX_FIXTURE_NO_DRAFT_GUARD: "1" }),
 			);
 
-			expect(result.status).toBe(1);
-			expect(result.stderr).toContain("hmux_input_draft_guard_unavailable");
-			expect(result.stderr).toContain("Nothing was sent");
-			expect(commandInputCalls(fx.hmuxLog)).toHaveLength(0);
+			expect(result.status, result.stderr).toBe(0);
+			expect(result.stdout).toContain("receipt 2");
+			expect(result.stderr).toContain(
+				"dure send: warning: backend was sent without waiting",
+			);
+			expect(result.stderr).toContain("Update Hmux");
+			expect(result.stderr).not.toContain("hmux_input_draft_guard_unavailable");
+			const sends = commandInputCalls(fx.hmuxLog);
+			expect(sends).toHaveLength(1);
+			expect(sends[0]).not.toContain("--draft-guard-wait-ms");
+		});
+
+		it("warns when the session's Host answers a guarded send with ordinary input", () => {
+			const fx = fixture();
+			const result = spawnSync(
+				process.execPath,
+				[cliPath, "send", "backend", "lane report"],
+				spawnOptions(fx, { HMUX_FIXTURE_MODE: "old-host" }),
+			);
+
+			expect(result.status, result.stderr).toBe(0);
+			expect(result.stdout).toContain("receipt 2");
+			expect(result.stdout).not.toContain("one draft-guarded write");
+			expect(result.stderr).toContain(
+				"its Hmux runtime predates draft-guarded input",
+			);
+			expect(result.stderr).toContain("Restart that session");
+			const [send] = commandInputCalls(fx.hmuxLog);
+			expect(send?.[send.indexOf("--draft-guard-wait-ms") + 1]).toBe("30000");
 		});
 
 		it("restores ordinary input only through an explicit --ignore-draft", () => {
@@ -320,6 +350,7 @@ describe.skipIf(process.platform === "win32")(
 			);
 
 			expect(result.status, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
 			expect(result.stdout).toContain("receipt 2");
 			const [send] = commandInputCalls(fx.hmuxLog);
 			expect(send).toContain("--submit");
