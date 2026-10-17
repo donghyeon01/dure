@@ -145,6 +145,33 @@ describe("ProviderCliUpdateRow", () => {
 				.disabled,
 		).toBe(false);
 	});
+	it("stays legible while updating and ignores a second press", async () => {
+		evaluateProviderCliUpdate.mockResolvedValue(update());
+		let finish: (value: unknown) => void = () => {};
+		runProviderCliUpdate.mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			}),
+		);
+		render(
+			<ProviderCliUpdateRow
+				provider="claude"
+				preflight={preflight()}
+				refreshPreflight={vi.fn(async () => {})}
+			/>,
+		);
+		fireEvent.click(await screen.findByRole("button", { name: "업데이트" }));
+		const busy = (await screen.findByRole("button", {
+			name: "업데이트 중…",
+		})) as HTMLButtonElement;
+		expect(busy.disabled).toBe(false);
+		expect(busy.getAttribute("aria-busy")).toBe("true");
+		fireEvent.click(busy);
+		expect(runProviderCliUpdate).toHaveBeenCalledTimes(1);
+		finish({ kind: "updated", fromVersion: "2.1.252", toVersion: "2.1.258" });
+		await screen.findByRole("button", { name: "업데이트" });
+	});
+
 	it("renders nothing when no update is available", async () => {
 		evaluateProviderCliUpdate.mockResolvedValue(null);
 		const { container } = render(

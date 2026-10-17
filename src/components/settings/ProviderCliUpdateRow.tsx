@@ -1,7 +1,9 @@
+import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ProviderCliUpdateFeedback } from "@/components/settings/ProviderCliUpdateFeedback";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DureLoader } from "@/components/ui/dure-loader";
 import { runShell } from "@/lib/ipc/process";
 import { providerExecutable } from "@/lib/agents/providerPreflight";
 import { t } from "@/lib/i18n";
@@ -111,12 +113,21 @@ export function ProviderCliUpdateRow({
 					<code className="text-meta text-muted-foreground">
 						{update.plan.command}
 					</code>
+					{/* The page's one call to action, so it is filled. While it runs it
+					    stays legible — a dimmed disabled control read as gone (owner
+					    report 2026-10-17); `run` already ignores a second press. */}
 					<Button
 						size="sm"
-						variant="outline"
-						disabled={running}
+						className="h-8 shrink-0 aria-busy:pointer-events-none"
+						aria-busy={running}
+						aria-disabled={running}
 						onClick={() => void run()}
 					>
+						{running ? (
+							<DureLoader decorative />
+						) : (
+							<RefreshCw className="size-3" />
+						)}
 						{running ? t("common.updating") : t("common.update")}
 					</Button>
 				</div>
