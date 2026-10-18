@@ -329,8 +329,10 @@ fn scan_sessions_with_starting(
             if !has_component_prefix(&session_path, "s_") {
                 continue;
             }
-            // 불완전하거나 안전하지 않은 항목은 건너뛴다. 이름 소유권 조회만
-            // Starting 상태를 포함하고 일반 목록은 기존 의미를 유지한다.
+            // A stale, missing, or per-entry insecure session is tolerated
+            // (skipped) so the census stays truthful about the sessions that
+            // are actually attachable. Only name-ownership lookups include
+            // Starting sessions; general listings keep the original meaning.
             if let Ok(Some(session)) = read_listed_session(root, &session_path, include_starting) {
                 observe(session)?;
             }

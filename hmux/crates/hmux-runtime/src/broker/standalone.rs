@@ -4,6 +4,7 @@ use crate::host::{HOST_PACKET_SCHEMA, HostLaunchPacket, HostSpawnFailure, spawn_
 use crate::recovery::{
     prepare_superseding_recipe, read_optional_resurrection_recipe,
     remove_resurrection_recipe_exact, save_resurrection_recipe, supersede_request_binding,
+    supersede_request_fingerprint,
 };
 use crate::server::resolve_command;
 use crate::{DynError, Result, unix_time_ms};
@@ -133,32 +134,35 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
             "a general saved recipe already owns this standalone session name",
         ));
     }
-    let bound_retry = if supersede {
-        previous_recipe.as_ref().ok_or_else(|| {
+    let supersede_previous = if supersede {
+        Some(previous_recipe.as_ref().ok_or_else(|| {
             recovery_refusal(
                 "hmux_standalone_recovery_target_unavailable",
                 "standalone supersede requires an existing recipe",
             )
-        })?;
+        })?)
+    } else {
+        None
+    };
+    let bound_retry = if supersede {
         let binding = supersede_request_binding(&discovery_root, &session_name)?;
-        let same_identity = binding
-            .as_ref()
-            .and_then(|bound| bound.recovery_identity())
-            .map(standalone_create_idempotency_key)
-            .as_deref()
-            == idempotency_key.as_deref();
-        if same_identity {
-            if binding.as_ref() != Some(&request) {
-                return Err(recovery_refusal(
-                    "hmux_standalone_recipe_conflict",
-                    "supersede retry differs from the bound request",
-                ));
+        match binding {
+            Some(binding)
+                if binding.idempotency_key.as_deref() == idempotency_key.as_deref() =>
+            {
+                if binding.request_sha256 != supersede_request_fingerprint(&request)? {
+                    return Err(recovery_refusal(
+                        "hmux_standalone_recipe_conflict",
+                        "supersede retry differs from the bound request",
+                    ));
+                }
+                validate_supersede_source(&discovery_root, &request, &session_name, true)?;
+                true
             }
-            validate_supersede_source(&discovery_root, &request, &session_name, true)?;
-            true
-        } else {
-            validate_supersede_source(&discovery_root, &request, &session_name, false)?;
-            false
+            _ => {
+                validate_supersede_source(&discovery_root, &request, &session_name, false)?;
+                false
+            }
         }
     } else {
         false
@@ -214,16 +218,12 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
             );
         }
     }
-    let presentation_source = if supersede {
-        None
-    } else {
-        refuse_duplicate_name(
-            &discovery_root,
-            &session_name,
-            request.recovery_identity(),
-            idempotency_key.as_deref(),
-        )?
-    };
+    let presentation_source = refuse_duplicate_name(
+        &discovery_root,
+        &session_name,
+        request.recovery_identity(),
+        idempotency_key.as_deref(),
+    )?;
     let provider_cwd = recipe.provider_cwd().to_path_buf();
     let (provider_program, provider_args) = resolve_command(recipe.command());
     let packet = HostLaunchPacket {
@@ -256,13 +256,13 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
     // recipe fault can never revoke a generation another client has already
     // observed or written to.
     if supersede && !bound_retry {
-        prepare_superseding_recipe(
-            &discovery_root,
-            previous_recipe.as_ref().unwrap(),
-            &recipe,
-            &request,
-        )?
-        .commit()?;
+        let previous = supersede_previous.ok_or_else(|| {
+            recovery_refusal(
+                "hmux_standalone_recovery_target_unavailable",
+                "standalone supersede requires an existing recipe",
+            )
+        })?;
+        prepare_superseding_recipe(&discovery_root, previous, &recipe, &request)?.commit()?;
     }
     if supersede {
         retire_superseded_source(&discovery_root, &request, &session_name)?;
@@ -409,7 +409,7 @@ fn retire_superseded_source(
                 "supersede source became active before retirement",
             ));
         }
-        // 게시 이후에만 이전 세대의 포인터를 정리한다.
+        // Clear the previous generation's pointer only after publication.
         let discovery = root.open_session(session.key.clone())?;
         let lock = discovery.acquire_lifetime_lock()?;
         discovery.cleanup_current(&lock, &session.manifest.generation())?;

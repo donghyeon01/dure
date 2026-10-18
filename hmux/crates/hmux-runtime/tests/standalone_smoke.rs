@@ -16,6 +16,7 @@ use hmux_client::{
     StandaloneResurrectionRecipe, StandaloneResurrectionReplayPolicy, StandaloneSessionCreator,
     TerminalEnvironment, WorkingDirectorySource, list_local_sessions_isolated,
     probe_local_process_generation, probe_local_session, probe_local_session_exact,
+    standalone_create_idempotency_key,
 };
 #[cfg(feature = "terminal-state-stream")]
 use hmux_client::{
@@ -5384,9 +5385,19 @@ fn supersede_replaces_the_final_request_and_reconciles_a_lost_response() {
         persisted["supersedeAudit"]["previousRecipe"]["command"],
         serde_json::json!(["/bin/sh"])
     );
+    assert!(persisted["supersedeAudit"].get("request").is_none());
     assert_eq!(
-        persisted["supersedeAudit"]["request"],
-        serde_json::to_value(&request).unwrap()
+        persisted["supersedeAudit"]["requestBinding"]["idempotencyKey"],
+        serde_json::json!(standalone_create_idempotency_key(
+            request.recovery_identity().unwrap()
+        ))
+    );
+    assert_eq!(
+        persisted["supersedeAudit"]["requestBinding"]["requestSha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
     );
     assert_eq!(canonical.command(), request.command());
     assert_eq!(canonical.provider_cwd(), cwd.canonicalize().unwrap());
@@ -5580,10 +5591,15 @@ fn successive_supersedes_use_the_latest_source_and_preserve_the_audit_chain() {
             serde_json::to_value(&previous).unwrap()
         );
         if index == 1 {
-            assert_eq!(
-                payload["supersedeAudit"]["history"][0]["request"]["recoveryIdentity"]["targetSessionId"],
-                "standalone_supersede_repeat00"
+            let entry = &payload["supersedeAudit"]["history"][0];
+            assert!(entry.get("request").is_none());
+            assert!(
+                entry["requestBinding"]["idempotencyKey"]
+                    .as_str()
+                    .is_some_and(|key| !key.is_empty())
             );
+            // The owner proof must not accumulate in audit history.
+            assert!(!entry.to_string().contains("supersede-repeat-owner-0"));
         }
         source = restored.session().descriptor().clone();
         previous = canonical;

@@ -991,7 +991,7 @@ pub enum StandaloneRecipeRequirement {
     /// The exact caller-owned request is the sole replay authority. The
     /// runtime must not read or publish a general resurrection recipe.
     RequestBound,
-    /// 종료된 선행 세대를 검증한 뒤 기존 영속 레시피를 교체한다.
+    /// Replace the persisted recipe after verifying the exited predecessor.
     Supersede,
 }
 
@@ -6291,9 +6291,10 @@ mod tests {
 
     #[test]
     fn supersede_recipe_requirement_round_trips_and_rejects_ambiguous_wire() {
-        let identity = StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof")
-            .unwrap()
-            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede);
+        let identity =
+            StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof")
+                .unwrap()
+                .with_recipe_requirement(StandaloneRecipeRequirement::Supersede);
         let wire = serde_json::to_value(&identity).unwrap();
         assert_eq!(wire["recipeRequirement"], "supersede");
         assert_eq!(
@@ -6307,12 +6308,12 @@ mod tests {
             let duplicate = format!(
                 r#"{{"targetSessionId":"standalone_target01","launchOwnerProof":"private-proof","recipeRequirement":{requirements}}}"#
             );
-            let error = serde_json::from_str::<StandaloneRecoveryCreateIdentity>(&duplicate)
-                .unwrap_err();
+            let error =
+                serde_json::from_str::<StandaloneRecoveryCreateIdentity>(&duplicate).unwrap_err();
             assert!(error.to_string().contains("duplicate field"));
         }
 
-        // 구 런타임의 enum 디코더는 알 수 없는 교체 의도를 거절해야 한다.
+        // A legacy runtime's enum decoder must reject the unknown supersede intent.
         #[derive(Debug, Deserialize)]
         #[serde(rename_all = "snake_case")]
         enum LegacyRecipeRequirement {

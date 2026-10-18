@@ -336,7 +336,8 @@ impl DiscoveryRoot {
         super::session_lookup::list_sessions_named(self, name)
     }
 
-    /// 이름 소유권 검사를 위해 Starting 상태까지 포함한 현재 세대를 조회한다.
+    /// List the current generation under a name, including Starting sessions,
+    /// for name-ownership checks.
     pub fn list_sessions_named_including_starting(
         &self,
         name: &str,

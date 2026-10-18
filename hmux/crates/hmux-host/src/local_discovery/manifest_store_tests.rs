@@ -950,7 +950,11 @@ fn named_census_including_starting_preserves_ordinary_listing_and_name_filter() 
     assert_eq!(named[0].key.session_id(), "session_starting");
     assert!(matches!(named[0].manifest, DiscoveryManifest::Starting(_)));
     assert_eq!(root.list_sessions().unwrap().len(), 1);
-    assert!(root.list_sessions_named_including_starting("missing").unwrap().is_empty());
+    assert!(
+        root.list_sessions_named_including_starting("missing")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
